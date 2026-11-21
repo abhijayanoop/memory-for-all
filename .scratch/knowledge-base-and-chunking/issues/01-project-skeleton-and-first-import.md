@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] The local program is its own Python package in the repo, separate from `prototype/`; `uv run pytest` runs the tests and `uv run memoryforall` runs the command line
 - [ ] `import` validates each JSON file against the Conversation shape (platform `chatgpt`/`claude`, non-empty chat_id, ISO times, senders `user`/`assistant`); an invalid file is rejected with a reason and the rest continue
@@ -16,3 +16,7 @@
 - [ ] Markdown files without `platform` and `chat_id` front matter are not treated as Conversations
 - [ ] `status` prints the Conversation count per Platform
 - [ ] Tests use temporary folders and small synthetic fixtures only, never real chats
+
+## Answer
+
+Implemented on branch `integration/knowledge-base-and-chunking`.

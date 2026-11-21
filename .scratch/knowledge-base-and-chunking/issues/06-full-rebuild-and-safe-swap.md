@@ -4,9 +4,13 @@
 
 **Blocked by:** 05
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] A full rebuild happens when the index is missing or unreadable, or when its stored embedder name, dimension or rules version differs from the current ones
 - [ ] A rebuild writes a new index file beside the old one and swaps it in only when complete; a simulated failure mid-rebuild leaves the old index usable
 - [ ] Deleting the `.index` folder and running `reindex` gives the same Chunks (IDs, text, labels) as before
 - [ ] Tests cover each trigger and the interrupted rebuild
+
+## Answer
+
+Implemented on branch `integration/knowledge-base-and-chunking`.
