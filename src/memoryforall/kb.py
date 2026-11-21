@@ -10,7 +10,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-RULES_VERSION = 2
+RULES_VERSION = 3  # 3: adds the chunks_fts keyword table
+KEYWORD_TOP = 50  # untuned, to be tuned against the Test Set (spec 4)
 PLATFORMS = ("chatgpt", "claude")
 NOTES = "## My notes\n"
 _HEADING = re.compile(r"^### (User|Assistant)(?: · (\S+))?$", re.M)
@@ -115,6 +116,13 @@ def parse(text: str) -> tuple[Conversation, str] | None:
         msgs.append(Message(h.group(1).lower(), h.group(2), "\n".join(lines), atts))
     return Conversation(meta["platform"], json.loads(meta["chat_id"]), json.loads(meta["title"]),
                         meta["created"], meta["updated"], msgs), notes
+
+
+@dataclass
+class Hit:
+    chunk: "object"  # chunk.Chunk
+    rank: int  # 1 = best
+    score: float | None = None  # raw re-ranker score, filled by the re-ranker (ticket 03)
 
 
 class KnowledgeBase:
@@ -224,9 +232,11 @@ class KnowledgeBase:
             db.execute("select platform from files limit 1")  # old or missing schema: start fresh
         except sqlite3.OperationalError:
             db.executescript("""drop table if exists meta; drop table if exists files; drop table if exists chunks;
+                drop table if exists chunks_fts;
                 create table meta(embedder, dimension, rules_version, last_refreshed);
                 create table files(path, fingerprint, chat_id, platform);
-                create table chunks(id, kind, platform, chat_id, title, date, position, text, vector);""")
+                create table chunks(id, kind, platform, chat_id, title, date, position, text, vector);
+                create virtual table chunks_fts using fts5(id unindexed, text);""")
         known = {r[0]: r[1:] for r in db.execute("select path, fingerprint, chat_id, platform from files")}
         n = {"added": 0, "changed": 0, "removed": 0, "skipped": 0}
 
@@ -235,6 +245,8 @@ class KnowledgeBase:
             db.execute("delete from files where path=?", (path,))
             # a renamed Conversation's new file already holds this key: keep its Chunks
             if not db.execute("select 1 from files where platform=? and chat_id=?", (platform, chat_id)).fetchone():
+                db.execute("delete from chunks_fts where id in (select id from chunks where platform=? and chat_id=?)",
+                           (platform, chat_id))
                 db.execute("delete from chunks where platform=? and chat_id=?", (platform, chat_id))
 
         seen, keys = set(), set()
@@ -276,6 +288,7 @@ class KnowledgeBase:
                 db.execute("insert into chunks values (?,?,?,?,?,?,?,?,?)",
                            (k.id, k.kind, k.platform, k.chat_id, k.title, k.date, k.position, k.text,
                             array.array("f", k.vector).tobytes()))
+                db.execute("insert into chunks_fts values (?,?)", (k.id, k.text))
         for rel in set(known) - seen:
             drop(rel)
             n["removed"] += 1
@@ -289,19 +302,38 @@ class KnowledgeBase:
             os.replace(target, self.index_path)  # swap in only when complete
         return n
 
-    def _query(self, sql):
+    def _query(self, sql, params=()):
         if not self.index_path.exists():
             return []
         db = sqlite3.connect(self.index_path)
         try:
-            return db.execute(sql).fetchall()
+            return db.execute(sql, params).fetchall()
         finally:
             db.close()
 
-    def chunks(self) -> list:
+    @staticmethod
+    def _chunk(r):
         from .chunk import Chunk
-        return [Chunk(*r[:8], list(array.array("f", r[8])))
-                for r in self._query("select * from chunks order by platform, chat_id, position")]
+        return Chunk(*r[:8], list(array.array("f", r[8])))
+
+    def chunks(self) -> list:
+        return [self._chunk(r) for r in self._query("select * from chunks order by platform, chat_id, position")]
+
+    def search(self, request: str, k: int = 5) -> list[Hit]:
+        """Chunks sharing words with the Request, best first. Never refreshes the index."""
+        if not request.strip():
+            raise ValueError("Request is empty; type some words to search for")
+        words = re.findall(r"\w+", request)
+        if not words:
+            return []
+        # each word a quoted literal term, so user text is never read as FTS5 syntax
+        match = " OR ".join('"' + w.replace('"', '""') + '"' for w in words)
+        try:
+            rows = self._query("select c.* from chunks_fts f join chunks c on c.id = f.id where chunks_fts match ? "
+                               "order by bm25(chunks_fts) limit ?", (match, KEYWORD_TOP))
+        except sqlite3.OperationalError:
+            return []  # index from before the keyword table: reindex rebuilds it
+        return [Hit(self._chunk(r), n) for n, r in enumerate(rows[:k], 1)]
 
     def last_refreshed(self) -> str | None:
         r = self._query("select last_refreshed from meta")
