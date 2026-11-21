@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (Keyword search end to end)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] The Request is embedded with the Knowledge Base's embedder; cosine similarity (dot product of unit vectors) against all Chunk vectors gives the top 50
 - [ ] Keyword top 50 and meaning top 50 are fused with score = sum of `1 / (60 + rank)`; a Chunk in only one list still counts
