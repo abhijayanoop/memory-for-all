@@ -13,6 +13,57 @@ def settings_file() -> Path:
     return (Path(d) if d else Path(os.environ.get("APPDATA") or Path.home() / ".config") / "memoryforall") / "settings.json"
 
 
+# Allowed values per setting; the first is the default.
+MODES = {"search_mode": ("local", "hosted"), "pack_mode": ("local", "hosted"), "pack_provider": ("openai", "claude")}
+KEYS = {"openai": "OPENAI_API_KEY", "claude": "ANTHROPIC_API_KEY"}
+
+
+def load_settings(sf: Path) -> dict:
+    """The settings file with Mode defaults filled in. ValueError names the file on a corrupt file or unknown value."""
+    s = {}
+    if sf.exists():
+        try:
+            s = json.loads(sf.read_text(encoding="utf-8"))
+        except ValueError:
+            s = None
+        if not isinstance(s, dict):
+            raise ValueError(f"Settings file {sf} is corrupt; delete it or run: memoryforall set-kb <folder>")
+    for k, allowed in MODES.items():
+        v = s.setdefault(k, allowed[0])
+        if v not in allowed:
+            raise ValueError(f"Settings file {sf} has unknown {k} {v!r}; expected one of: {', '.join(allowed)}")
+    return s
+
+
+def save_settings(sf: Path, s: dict) -> None:
+    sf.parent.mkdir(parents=True, exist_ok=True)
+    sf.write_text(json.dumps(s), encoding="utf-8")
+
+
+def modes_text(s: dict) -> str:
+    pack = s["pack_mode"] + (f" ({s['pack_provider']})" if s["pack_mode"] == "hosted" else "")
+    return f"search: {s['search_mode']}\npack: {pack}"
+
+
+def set_mode(sf: Path, s: dict, which: str, value: str, provider: str | None) -> int:
+    if which == "search":
+        if value == "hosted":
+            if not os.environ.get("OPENAI_API_KEY"):
+                print("Hosted search needs OPENAI_API_KEY in the environment (Claude offers no embeddings).", file=sys.stderr)
+                return 2
+            print("Chunks (on reindex) and Requests (on search) will be sent to OpenAI. Run reindex to re-embed.")
+        s["search_mode"] = value
+    else:
+        provider = provider or s["pack_provider"]
+        if value == "hosted" and not os.environ.get(KEYS[provider]):
+            print(f"Hosted pack-writing with {provider} needs {KEYS[provider]} in the environment.", file=sys.stderr)
+            return 2
+        s["pack_mode"], s["pack_provider"] = value, provider
+    save_settings(sf, s)
+    print(modes_text(s))
+    return 0
+
+
 def main(argv=None, embedder=None) -> int:
     p = argparse.ArgumentParser(prog="memoryforall")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -22,22 +73,36 @@ def main(argv=None, embedder=None) -> int:
     for s in sub.choices.values():
         s.add_argument("--kb")
     sub.add_parser("set-kb").add_argument("path")
+    m = sub.add_parser("mode")
+    m.add_argument("which", nargs="?", choices=("search", "pack"))
+    m.add_argument("value", nargs="?", choices=("local", "hosted"))
+    m.add_argument("--provider", choices=tuple(KEYS))
     a = p.parse_args(argv)
     sf = settings_file()
     if a.cmd == "set-kb":
         path = Path(a.path).expanduser().resolve()
         path.mkdir(parents=True, exist_ok=True)
-        sf.parent.mkdir(parents=True, exist_ok=True)
-        sf.write_text(json.dumps({"kb": str(path)}), encoding="utf-8")
+        try:
+            s = load_settings(sf)
+        except ValueError:
+            s = {}  # set-kb is the advertised fix for a corrupt file, so it starts fresh
+        s["kb"] = str(path)
+        save_settings(sf, s)
         print(f"Knowledge Base set to {path}")
         return 0
-    kb_path = a.kb
-    if not kb_path and sf.exists():
-        try:
-            kb_path = json.loads(sf.read_text(encoding="utf-8")).get("kb")
-        except (ValueError, AttributeError):
-            print(f"Settings file {sf} is corrupt; delete it or run: memoryforall set-kb <folder>", file=sys.stderr)
-            return 2
+    try:
+        s = load_settings(sf)
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return 2
+    if a.cmd == "mode":
+        if a.which and a.value:
+            return set_mode(sf, s, a.which, a.value, a.provider)
+        if a.which or a.provider:
+            p.error("usage: mode [search local|hosted | pack local|hosted [--provider openai|claude]]")
+        print(modes_text(s))
+        return 0
+    kb_path = a.kb or s.get("kb")
     if not kb_path:
         print("No Knowledge Base folder set. Run: memoryforall set-kb <folder> "
               f"(suggested: {Path.home() / 'Documents' / 'Memory for All'}), or pass --kb.", file=sys.stderr)
@@ -62,6 +127,9 @@ def main(argv=None, embedder=None) -> int:
             print(f"{pl}: {by[pl]}")
         print(f"chunks: {len(kb.chunks())}")
         print(f"last refreshed: {kb.last_refreshed() or 'never'}")
+        print(modes_text(s))
+        for key in sorted(set(KEYS.values())):
+            print(f"{key}: {'present' if os.environ.get(key) else 'missing'}")
     return 0
 
 
