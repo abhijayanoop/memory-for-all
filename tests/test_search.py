@@ -27,16 +27,51 @@ def ids(hits):
     return [h.chunk.chat_id for h in hits]
 
 
+class TableEmbedder:
+    """First rule whose word is in the text gives the vector; otherwise [0, 1]."""
+    name, dimension = "table", 2
+    rules = [("mixed", [0.6, 0.8]), ("purr", [1.0, 0.0]), ("kitten", [1.0, 0.0]), ("feline", [1.0, 0.0])]
+
+    def embed(self, texts):
+        return [next((v for w, v in self.rules if w in t), [0.0, 1.0]) for t in texts]
+
+
+def test_no_shared_words_finds_meaning_match(tmp_path):
+    kb = make(tmp_path, TableEmbedder(), [conv("a", "fix the boat engine"), conv("b", "my pet likes to purr")])
+    assert ids(kb.search("feline"))[0] == "b"
+
+
+def test_exact_word_found_even_when_vectors_unrelated(tmp_path):
+    kb = make(tmp_path, TableEmbedder(), [conv(f"p{i}", f"purr number {i}") for i in range(8)]
+              + [conv("d", "fix the docker compose file")])
+    assert ids(kb.search("kitten docker"))[0] == "d"
+
+
+def test_chunk_in_both_lists_outranks_one_list(tmp_path):
+    # meaning order: b (exact vector), a, c; keyword: only a
+    kb = make(tmp_path, TableEmbedder(), [conv("a", "mixed kitten"), conv("b", "purr"), conv("c", "boat")])
+    assert ids(kb.search("kitten")) == ["a", "b", "c"]
+
+
+def test_refresh_changes_seen_by_meaning_side(tmp_path):
+    kb = make(tmp_path, TableEmbedder(), [conv("a", "purr"), conv("b", "purr too"), conv("x", "boat")])
+    next(tmp_path.rglob("*-a.md")).write_bytes(render(conv("a", "engine")).encode())  # changed
+    next(tmp_path.rglob("*-b.md")).unlink()  # removed
+    kb.save(conv("c", "purr again"))  # added
+    kb.refresh_index()
+    got = ids(kb.search("feline"))
+    assert got[0] == "c" and "b" not in got and sorted(got) == ["a", "c", "x"]
+
+
 def test_exact_word_finds_its_chunk(tmp_path, fake):
     kb = make(tmp_path, fake, [conv("a", "how do I bake sourdough"), conv("b", "fix the docker compose file")])
     hits = kb.search("docker")
-    assert ids(hits) == ["b"]
+    assert ids(hits)[0] == "b"
     assert hits[0].rank == 1 and "docker compose" in hits[0].chunk.text
 
 
-def test_best_keyword_match_first_and_k_limits(tmp_path, fake):
+def test_k_limits(tmp_path, fake):
     kb = make(tmp_path, fake, [conv("a", "zebra apple"), conv("b", "zebra zebra zebra mango"), conv("c", "zebra pear")])
-    assert ids(kb.search("zebra mango"))[0] == "b"
     assert len(kb.search("zebra", k=2)) == 2
     assert sorted(ids(kb.search("zebra", k=50))) == ["a", "b", "c"]
     assert [h.rank for h in kb.search("zebra", k=50)] == [1, 2, 3]
@@ -77,7 +112,7 @@ def test_notes_are_searchable_and_marked(tmp_path, fake):
     p.write_bytes(p.read_bytes() + b"remember the giraffe password\n")
     kb.refresh_index()
     hits = kb.search("giraffe")
-    assert [h.chunk.kind for h in hits] == ["notes"]
+    assert hits[0].chunk.kind == "notes"
 
 
 def test_refresh_keeps_keyword_index_in_step(tmp_path, fake):
@@ -88,8 +123,9 @@ def test_refresh_keeps_keyword_index_in_step(tmp_path, fake):
     pb.unlink()  # removed
     kb.save(conv("c", "delta topic"))  # added
     kb.refresh_index()
-    assert kb.search("alpha") == [] and kb.search("beta") == []
-    assert ids(kb.search("gamma")) == ["a"] and ids(kb.search("delta")) == ["c"]
+    texts = " ".join(h.chunk.text for h in kb.search("alpha beta", k=50))
+    assert "alpha" not in texts and "beta" not in texts
+    assert ids(kb.search("gamma"))[0] == "a" and ids(kb.search("delta"))[0] == "c"
     assert sorted(ids(kb.search("topic"))) == ["a", "c"]
 
 
@@ -103,7 +139,7 @@ def test_spec1_index_is_rebuilt_and_searchable(tmp_path, fake, monkeypatch):
     db.commit()
     db.close()
     monkeypatch.undo()
-    assert kb.search("zebra") == []
+    assert ids(kb.search("zebra")) == ["a"]  # meaning side still works without the keyword table
     kb.refresh_index()
     assert ids(kb.search("zebra")) == ["a"]
 

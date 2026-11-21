@@ -11,7 +11,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 RULES_VERSION = 3  # 3: adds the chunks_fts keyword table
-KEYWORD_TOP = 50  # untuned, to be tuned against the Test Set (spec 4)
+# untuned, to be tuned against the Test Set (spec 4)
+KEYWORD_TOP = 50
+MEANING_TOP = 50
+FUSION_K = 60  # reciprocal rank fusion: score = sum of 1 / (FUSION_K + rank)
 PLATFORMS = ("chatgpt", "claude")
 NOTES = "## My notes\n"
 _HEADING = re.compile(r"^### (User|Assistant)(?: · (\S+))?$", re.M)
@@ -320,20 +323,32 @@ class KnowledgeBase:
         return [self._chunk(r) for r in self._query("select * from chunks order by platform, chat_id, position")]
 
     def search(self, request: str, k: int = 5) -> list[Hit]:
-        """Chunks sharing words with the Request, best first. Never refreshes the index."""
+        """Chunks matching the Request by keyword and by meaning, fused, best first. Never refreshes the index."""
         if not request.strip():
             raise ValueError("Request is empty; type some words to search for")
-        words = re.findall(r"\w+", request)
-        if not words:
+        rows = {r[0]: r for r in self._query("select * from chunks")}
+        if not rows:
             return []
-        # each word a quoted literal term, so user text is never read as FTS5 syntax
-        match = " OR ".join('"' + w.replace('"', '""') + '"' for w in words)
-        try:
-            rows = self._query("select c.* from chunks_fts f join chunks c on c.id = f.id where chunks_fts match ? "
-                               "order by bm25(chunks_fts) limit ?", (match, KEYWORD_TOP))
-        except sqlite3.OperationalError:
-            return []  # index from before the keyword table: reindex rebuilds it
-        return [Hit(self._chunk(r), n) for n, r in enumerate(rows[:k], 1)]
+        keyword = []
+        words = re.findall(r"\w+", request)
+        if words:
+            # each word a quoted literal term, so user text is never read as FTS5 syntax
+            match = " OR ".join('"' + w.replace('"', '""') + '"' for w in words)
+            try:
+                keyword = [r[0] for r in self._query("select id from chunks_fts where chunks_fts match ? "
+                                                     "order by bm25(chunks_fts) limit ?", (match, KEYWORD_TOP))]
+            except sqlite3.OperationalError:
+                pass  # index from before the keyword table: reindex rebuilds it
+        q = self.embedder.embed([request])[0]
+        # vectors are unit length, so cosine similarity is a dot product
+        sim = {i: sum(a * b for a, b in zip(q, array.array("f", r[8]))) for i, r in rows.items()}
+        meaning = sorted(sim, key=sim.get, reverse=True)[:MEANING_TOP]
+        fused = {}
+        for ranking in (keyword, meaning):
+            for rank, i in enumerate(ranking, 1):
+                fused[i] = fused.get(i, 0) + 1 / (FUSION_K + rank)
+        best = sorted(fused, key=fused.get, reverse=True)
+        return [Hit(self._chunk(rows[i]), n) for n, i in enumerate(best[:k], 1)]
 
     def last_refreshed(self) -> str | None:
         r = self._query("select last_refreshed from meta")
