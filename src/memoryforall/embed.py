@@ -1,4 +1,10 @@
 """Embedder interface: name, dimension, embed(texts) -> unit-length vectors."""
+import json
+import math
+import os
+import time
+import urllib.error
+from urllib.request import Request, urlopen
 
 
 class FastEmbedder:
@@ -13,3 +19,46 @@ class FastEmbedder:
             self._model = TextEmbedding(self.name)
         # bge outputs are already L2-normalised
         return [v.tolist() for v in self._model.embed(texts)]
+
+
+class OpenAIEmbedder:
+    """Hosted search: sends Chunk and Request text to OpenAI. The key is read from OPENAI_API_KEY at embed time."""
+    name, dimension = "text-embedding-3-small", 1536
+    batch, retries = 100, 6  # 100 Chunks of <=1,800 chars stays far under the per-request token cap
+
+    def embed(self, texts):
+        key = os.environ.get("OPENAI_API_KEY")
+        if not key:
+            raise RuntimeError("Hosted search needs OPENAI_API_KEY in the environment.")
+        out = []
+        for i in range(0, len(texts), self.batch):
+            data = sorted(self._post(key, texts[i:i + self.batch]), key=lambda d: d["index"])
+            for d in data:
+                n = math.sqrt(sum(x * x for x in d["embedding"]))
+                out.append([x / n for x in d["embedding"]])
+        return out
+
+    def _post(self, key, texts):
+        req = Request("https://api.openai.com/v1/embeddings",
+                      json.dumps({"model": self.name, "input": texts}).encode(),
+                      {"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+        for attempt in range(self.retries + 1):
+            try:
+                with urlopen(req, timeout=60) as r:
+                    return json.loads(r.read())["data"]
+            except urllib.error.HTTPError as e:
+                if e.code == 429 and attempt < self.retries:
+                    time.sleep(float(e.headers.get("Retry-After") or 2 ** attempt))
+                    continue
+                if e.code == 401:
+                    raise RuntimeError("OpenAI rejected the key in OPENAI_API_KEY (HTTP 401); check it.") from None
+                # the response body is not shown: OpenAI echoes part of the key in it
+                raise RuntimeError(f"OpenAI embeddings request failed: HTTP {e.code} {e.reason}") from None
+            except urllib.error.URLError as e:
+                raise RuntimeError(f"Could not reach OpenAI: {e.reason}") from None
+
+
+# Fixed lookup from embedder name (as stored in the index's meta) to constructor.
+EMBEDDERS = {FastEmbedder.name: FastEmbedder, OpenAIEmbedder.name: OpenAIEmbedder}
+# Which embedder each search Mode targets.
+SEARCH_EMBEDDER = {"local": FastEmbedder.name, "hosted": OpenAIEmbedder.name}
