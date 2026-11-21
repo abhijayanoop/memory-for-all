@@ -63,7 +63,7 @@ def _cos(a, b):
 
 
 def chunk(c, notes, embedder) -> list[Chunk]:
-    prefix = f"Chat: {c.title}\n"
+    prefix = f"Chat: {c.title[:200]}\n"
     rows = []  # [kind, date, piece texts, body if the unit is unsplit (mergeable) else None]
     for time, q, answers in _units(c):
         date = time or c.updated

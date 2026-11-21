@@ -52,8 +52,8 @@ def validate(data) -> Conversation:
     if data.get("platform") not in PLATFORMS:
         raise ValueError(f"platform must be one of {PLATFORMS}")
     chat_id = data.get("chat_id")
-    if not isinstance(chat_id, str) or not chat_id:
-        raise ValueError("chat_id must be a non-empty string")
+    if not isinstance(chat_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", chat_id):
+        raise ValueError("chat_id must be non-empty and only contain letters, digits, - and _")
     title = data.get("title")
     if title is not None and not isinstance(title, str):
         raise ValueError("title must be a string or null")
@@ -102,7 +102,7 @@ def parse(text: str) -> tuple[Conversation, str] | None:
     # shortcut: first "## My notes" line ends the messages, so a message containing it breaks round-trip
     body = "\n" + body
     i = body.find("\n" + NOTES)
-    machine, notes = body[1:i + 1], body[i + 1 + len(NOTES):]
+    machine, notes = (body[1:], "") if i < 0 else (body[1:i + 1], body[i + 1 + len(NOTES):])
     msgs = []
     hs = list(_HEADING.finditer(machine))
     for k, h in enumerate(hs):
@@ -127,7 +127,11 @@ class KnowledgeBase:
         self.index_path = self.folder / ".index" / "index.sqlite"
 
     def _find(self, platform: str, chat_id: str) -> Path | None:
-        return next((self.folder / platform).glob(f"*/*-{chat_id}.md"), None)
+        for p in sorted((self.folder / platform).glob(f"*/*-{chat_id}.md")):
+            r = parse(p.read_text(encoding="utf-8"))  # glob also matches ids ending in -<chat_id>
+            if r and r[0].chat_id == chat_id:
+                return p
+        return None
 
     @staticmethod
     def _write(dest: Path, text: str) -> None:
@@ -228,10 +232,12 @@ class KnowledgeBase:
 
         def drop(path):
             _, chat_id, platform = known[path]
-            db.execute("delete from chunks where platform=? and chat_id=?", (platform, chat_id))
             db.execute("delete from files where path=?", (path,))
+            # a renamed Conversation's new file already holds this key: keep its Chunks
+            if not db.execute("select 1 from files where platform=? and chat_id=?", (platform, chat_id)).fetchone():
+                db.execute("delete from chunks where platform=? and chat_id=?", (platform, chat_id))
 
-        seen = set()
+        seen, keys = set(), set()
         for p in sorted(self.folder.rglob("*.md")):
             rel = p.relative_to(self.folder).as_posix()
             raw = p.read_bytes()
@@ -251,6 +257,11 @@ class KnowledgeBase:
             if r is None:
                 continue  # not a Conversation
             seen.add(rel)
+            if (r[0].platform, r[0].chat_id) in keys:
+                print(f"warning: skipped {rel}: duplicate of another file for this chat", file=sys.stderr)
+                n["skipped"] += 1
+                continue
+            keys.add((r[0].platform, r[0].chat_id))
             fp = hashlib.sha256(raw).hexdigest()
             if rel in known:
                 if known[rel][0] == fp:

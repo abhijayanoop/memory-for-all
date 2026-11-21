@@ -33,7 +33,11 @@ def main(argv=None, embedder=None) -> int:
         return 0
     kb_path = a.kb
     if not kb_path and sf.exists():
-        kb_path = json.loads(sf.read_text(encoding="utf-8")).get("kb")
+        try:
+            kb_path = json.loads(sf.read_text(encoding="utf-8")).get("kb")
+        except (ValueError, AttributeError):
+            print(f"Settings file {sf} is corrupt; delete it or run: memoryforall set-kb <folder>", file=sys.stderr)
+            return 2
     if not kb_path:
         print("No Knowledge Base folder set. Run: memoryforall set-kb <folder> "
               f"(suggested: {Path.home() / 'Documents' / 'Memory for All'}), or pass --kb.", file=sys.stderr)
