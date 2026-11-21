@@ -18,6 +18,7 @@ class FakeOpenAI:
 
     def __init__(self, statuses=()):
         self.statuses, self.requests = list(statuses), []
+        self.body = b'{"error": {"message": "Incorrect API key provided: sk-sec***"}}'
 
     def __call__(self, req, timeout=None):
         body = json.loads(req.data)
@@ -25,7 +26,7 @@ class FakeOpenAI:
         status = self.statuses.pop(0) if self.statuses else 200
         if status != 200:
             raise urllib.error.HTTPError(req.full_url, status, "err", {"Retry-After": "0"},
-                                         io.BytesIO(b'{"error": {"message": "Incorrect API key provided: sk-sec***"}}'))
+                                         io.BytesIO(self.body))
         # unnormalised, out of order, to check the embedder fixes both
         data = [{"index": i, "embedding": [3.0 * (len(t) + 1), 4.0 * (len(t) + 1)] + [0.0] * 1534}
                 for i, t in enumerate(body["input"])][::-1]
@@ -58,6 +59,14 @@ def test_rate_limit_is_retried(http):
     http.statuses = [429, 429]
     assert len(OpenAIEmbedder().embed(["a", "b"])) == 2
     assert len(http.requests) == 3
+
+
+def test_out_of_quota_fails_fast_without_key_or_body(http):
+    http.statuses = [429] * 10
+    http.body = b'{"error": {"code": "insufficient_quota", "message": "quota for sk-sec*** used up"}}'
+    with pytest.raises(RuntimeError, match="quota") as e:
+        OpenAIEmbedder().embed(["a"])
+    assert len(http.requests) == 1 and "sk-sec" not in str(e.value) and "used up" not in str(e.value)
 
 
 def test_bad_key_raises_clear_error_without_key(http):

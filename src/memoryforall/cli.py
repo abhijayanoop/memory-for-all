@@ -5,7 +5,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from .embed import EMBEDDERS, SEARCH_EMBEDDER
+from .embed import EMBEDDERS, KEYS, SEARCH_EMBEDDER
 from .kb import KnowledgeBase, validate
 
 
@@ -16,7 +16,6 @@ def settings_file() -> Path:
 
 # Allowed values per setting; the first is the default.
 MODES = {"search_mode": ("local", "hosted"), "pack_mode": ("local", "hosted"), "pack_provider": ("openai", "claude")}
-KEYS = {"openai": "OPENAI_API_KEY", "claude": "ANTHROPIC_API_KEY"}
 
 
 def load_settings(sf: Path) -> dict:
@@ -49,8 +48,9 @@ def modes_text(s: dict) -> str:
 def set_mode(sf: Path, s: dict, which: str, value: str, provider: str | None) -> int:
     if which == "search":
         if value == "hosted":
-            if not os.environ.get("OPENAI_API_KEY"):
-                print("Hosted search needs OPENAI_API_KEY in the environment (Claude offers no embeddings).", file=sys.stderr)
+            if not os.environ.get(KEYS["openai"]):
+                print(f"Hosted search needs {KEYS['openai']} in the environment (Claude offers no embeddings).",
+                      file=sys.stderr)
                 return 2
             print("Chunks (on reindex) and Requests (on search) will be sent to OpenAI. Run reindex to re-embed.")
         s["search_mode"] = value
@@ -71,11 +71,11 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS) -> int:
     sub.add_parser("import").add_argument("folder")
     sub.add_parser("reindex")
     sub.add_parser("status")
-    s = sub.add_parser("search")
-    s.add_argument("request")
-    s.add_argument("-k", type=int, default=5)
-    for s in sub.choices.values():
-        s.add_argument("--kb")
+    search_p = sub.add_parser("search")
+    search_p.add_argument("request")
+    search_p.add_argument("-k", type=int, default=5)
+    for cmd_p in sub.choices.values():
+        cmd_p.add_argument("--kb")
     sub.add_parser("set-kb").add_argument("path")
     m = sub.add_parser("mode")
     m.add_argument("which", nargs="?", choices=("search", "pack"))
@@ -114,8 +114,7 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS) -> int:
     Path(kb_path).mkdir(parents=True, exist_ok=True)
     kb = KnowledgeBase(kb_path, embedder or embedders[SEARCH_EMBEDDER[s["search_mode"]]](), embedders)
     if a.cmd in ("search", "status"):  # not for reindex: it must still recover a damaged index file
-        live = kb.index_embedder()
-        pending = live not in (None, kb.embedder.name)
+        live, pending = kb.index_embedder(), kb.reembed_pending()
     if a.cmd == "import":
         counts = Counter()
         for f in sorted(Path(a.folder).glob("*.json")):
@@ -140,13 +139,15 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS) -> int:
             return 2
         if pending:
             print(f"note: re-embed pending; searching the index built with {live} until the next reindex")
+        idx = kb.index_path
+        if idx.exists() and any(p.stat().st_mtime > idx.stat().st_mtime for p in kb.folder.rglob("*.md")):
+            print("note: files changed since the last reindex; run: memoryforall reindex")
         if not hits:
-            print("No matches. If files changed, run: memoryforall reindex" if kb.chunks()
-                  else "The index is empty or missing. Run: memoryforall reindex")
+            print("No matches." if kb.chunks() else "The index is empty or missing. Run: memoryforall reindex")
         for h in hits:
             c = h.chunk
             print(f"{h.rank}. {c.title} · {c.platform} · {c.date[:10]} · {c.id}" + (" · notes" if c.kind == "notes" else "")
-                  + (f" · score {h.score:.3f}" if h.score is not None else ""))
+                  + f" · score {h.score:.3f}")
             print("   " + c.text[:200].replace("\n", " "))
     else:
         by = Counter(c.platform for c in kb.conversations())

@@ -6,6 +6,8 @@ import time
 import urllib.error
 from urllib.request import Request, urlopen
 
+KEYS = {"openai": "OPENAI_API_KEY", "claude": "ANTHROPIC_API_KEY"}  # provider -> key's environment variable
+
 
 class FastEmbedder:
     name, dimension = "BAAI/bge-small-en-v1.5", 384
@@ -27,9 +29,9 @@ class OpenAIEmbedder:
     batch, retries = 100, 6  # 100 Chunks of <=1,800 chars stays far under the per-request token cap
 
     def embed(self, texts):
-        key = os.environ.get("OPENAI_API_KEY")
+        key = os.environ.get(KEYS["openai"])
         if not key:
-            raise RuntimeError("Hosted search needs OPENAI_API_KEY in the environment.")
+            raise RuntimeError(f"Hosted search needs {KEYS['openai']} in the environment.")
         out = []
         for i in range(0, len(texts), self.batch):
             data = sorted(self._post(key, texts[i:i + self.batch]), key=lambda d: d["index"])
@@ -47,11 +49,14 @@ class OpenAIEmbedder:
                 with urlopen(req, timeout=60) as r:
                     return json.loads(r.read())["data"]
             except urllib.error.HTTPError as e:
+                if e.code == 429 and b"insufficient_quota" in e.read():  # retrying cannot help; body never shown
+                    raise RuntimeError(f"OpenAI says the account is out of quota (HTTP 429); check billing for "
+                                       f"the key in {KEYS['openai']}.") from None
                 if e.code == 429 and attempt < self.retries:
                     time.sleep(float(e.headers.get("Retry-After") or 2 ** attempt))
                     continue
                 if e.code == 401:
-                    raise RuntimeError("OpenAI rejected the key in OPENAI_API_KEY (HTTP 401); check it.") from None
+                    raise RuntimeError(f"OpenAI rejected the key in {KEYS['openai']} (HTTP 401); check it.") from None
                 # the response body is not shown: OpenAI echoes part of the key in it
                 raise RuntimeError(f"OpenAI embeddings request failed: HTTP {e.code} {e.reason}") from None
             except urllib.error.URLError as e:
