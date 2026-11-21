@@ -19,6 +19,9 @@ def main(argv=None, embedder=None) -> int:
     sub.add_parser("import").add_argument("folder")
     sub.add_parser("reindex")
     sub.add_parser("status")
+    s = sub.add_parser("search")
+    s.add_argument("request")
+    s.add_argument("-k", type=int, default=5)
     for s in sub.choices.values():
         s.add_argument("--kb")
     sub.add_parser("set-kb").add_argument("path")
@@ -56,6 +59,20 @@ def main(argv=None, embedder=None) -> int:
     elif a.cmd == "reindex":
         n = kb.refresh_index()
         print(", ".join(f"{k}: {n[k]}" for k in ("added", "changed", "removed", "skipped", "chunks")))
+    elif a.cmd == "search":
+        try:
+            hits = kb.search(a.request, a.k)
+        except ValueError as e:
+            print(e, file=sys.stderr)
+            return 2
+        if not hits:
+            print("No matches. If files changed, run: memoryforall reindex" if kb.chunks()
+                  else "The index is empty or missing. Run: memoryforall reindex")
+        for h in hits:
+            c = h.chunk
+            print(f"{h.rank}. {c.title} · {c.platform} · {c.date[:10]} · {c.id}" + (" · notes" if c.kind == "notes" else "")
+                  + (f" · score {h.score:.3f}" if h.score is not None else ""))
+            print("   " + c.text[:200].replace("\n", " "))
     else:
         by = Counter(c.platform for c in kb.conversations())
         for pl in ("chatgpt", "claude"):
