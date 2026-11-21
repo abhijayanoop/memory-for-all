@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 (Meaning search and rank fusion)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Re-ranker interface: `name`, `rerank(request, texts) -> scores` (higher is better, raw scores)
 - [ ] Real re-ranker wraps fastembed's cross-encoder `Xenova/ms-marco-MiniLM-L-6-v2`, loaded lazily so `status` stays instant
