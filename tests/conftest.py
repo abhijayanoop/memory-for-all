@@ -19,3 +19,19 @@ class FakeEmbedder:
 @pytest.fixture
 def fake():
     return FakeEmbedder()
+
+
+class KeepOrderReranker:
+    """Scores texts by position, so the fused order is kept."""
+    name = "keep-order"
+
+    def rerank(self, request, texts):
+        return [float(len(texts) - n) for n in range(len(texts))]
+
+
+@pytest.fixture(autouse=True)
+def fake_reranker(request, monkeypatch):
+    # the default KnowledgeBase re-ranker would load the real model; slow tests keep it
+    if not request.node.get_closest_marker("slow"):
+        from memoryforall import rerank
+        monkeypatch.setattr(rerank, "FastReranker", KeepOrderReranker)

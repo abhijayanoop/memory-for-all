@@ -10,7 +10,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-RULES_VERSION = 2
+from .chunk import Chunk
+
+RULES_VERSION = 3  # 3: adds the chunks_fts keyword table
+# untuned, to be tuned against the Test Set (spec 4)
+KEYWORD_TOP = 50
+MEANING_TOP = 50
+FUSION_K = 60  # reciprocal rank fusion: score = sum of 1 / (FUSION_K + rank)
+RERANK_TOP = 20  # fused Chunks the re-ranker re-scores
 PLATFORMS = ("chatgpt", "claude")
 NOTES = "## My notes\n"
 _HEADING = re.compile(r"^### (User|Assistant)(?: · (\S+))?$", re.M)
@@ -117,14 +124,27 @@ def parse(text: str) -> tuple[Conversation, str] | None:
                         meta["created"], meta["updated"], msgs), notes
 
 
+@dataclass
+class Hit:
+    chunk: Chunk
+    rank: int  # 1 = best
+    score: float  # raw re-ranker score
+
+
 class KnowledgeBase:
-    def __init__(self, folder, embedder=None):
+    def __init__(self, folder, embedder=None, embedders=None, reranker=None):
+        """embedder: the target (search Mode's) embedder. embedders: name -> constructor, used to embed
+        the Request with the live index's model while a re-embed is pending."""
+        from .embed import EMBEDDERS, FastEmbedder
         self.folder = Path(folder)
-        if embedder is None:
-            from .embed import FastEmbedder
-            embedder = FastEmbedder()
-        self.embedder = embedder
+        self.embedder = embedder or FastEmbedder()
+        self.embedders = EMBEDDERS if embedders is None else embedders
+        if reranker is None:
+            from . import rerank
+            reranker = rerank.FastReranker()
+        self.reranker = reranker
         self.index_path = self.folder / ".index" / "index.sqlite"
+        self.keyword_only = False  # set by search: True when the last search skipped the meaning side
 
     def _find(self, platform: str, chat_id: str) -> Path | None:
         for p in sorted((self.folder / platform).glob(f"*/*-{chat_id}.md")):
@@ -224,18 +244,25 @@ class KnowledgeBase:
             db.execute("select platform from files limit 1")  # old or missing schema: start fresh
         except sqlite3.OperationalError:
             db.executescript("""drop table if exists meta; drop table if exists files; drop table if exists chunks;
+                drop table if exists chunks_fts;
                 create table meta(embedder, dimension, rules_version, last_refreshed);
                 create table files(path, fingerprint, chat_id, platform);
-                create table chunks(id, kind, platform, chat_id, title, date, position, text, vector);""")
+                create table chunks(id, kind, platform, chat_id, title, date, position, text, vector);
+                create virtual table chunks_fts using fts5(id unindexed, text);""")
         known = {r[0]: r[1:] for r in db.execute("select path, fingerprint, chat_id, platform from files")}
         n = {"added": 0, "changed": 0, "removed": 0, "skipped": 0}
+
+        def purge(platform, chat_id):
+            db.execute("delete from chunks_fts where id in (select id from chunks where platform=? and chat_id=?)",
+                       (platform, chat_id))
+            db.execute("delete from chunks where platform=? and chat_id=?", (platform, chat_id))
 
         def drop(path):
             _, chat_id, platform = known[path]
             db.execute("delete from files where path=?", (path,))
             # a renamed Conversation's new file already holds this key: keep its Chunks
             if not db.execute("select 1 from files where platform=? and chat_id=?", (platform, chat_id)).fetchone():
-                db.execute("delete from chunks where platform=? and chat_id=?", (platform, chat_id))
+                purge(platform, chat_id)
 
         seen, keys = set(), set()
         for p in sorted(self.folder.rglob("*.md")):
@@ -271,11 +298,13 @@ class KnowledgeBase:
             else:
                 n["added"] += 1
             c, notes = r
+            purge(c.platform, c.chat_id)  # a renamed file's old Chunks are still here under the same key
             db.execute("insert into files values (?,?,?,?)", (rel, fp, c.chat_id, c.platform))
             for k in chunk(c, notes, self.embedder):
                 db.execute("insert into chunks values (?,?,?,?,?,?,?,?,?)",
                            (k.id, k.kind, k.platform, k.chat_id, k.title, k.date, k.position, k.text,
                             array.array("f", k.vector).tobytes()))
+                db.execute("insert into chunks_fts values (?,?)", (k.id, k.text))
         for rel in set(known) - seen:
             drop(rel)
             n["removed"] += 1
@@ -289,19 +318,79 @@ class KnowledgeBase:
             os.replace(target, self.index_path)  # swap in only when complete
         return n
 
-    def _query(self, sql):
+    def _query(self, sql, params=()):
         if not self.index_path.exists():
             return []
         db = sqlite3.connect(self.index_path)
         try:
-            return db.execute(sql).fetchall()
+            return db.execute(sql, params).fetchall()
         finally:
             db.close()
 
+    @staticmethod
+    def _chunk(r):
+        return Chunk(*r[:8], list(array.array("f", r[8])))
+
     def chunks(self) -> list:
-        from .chunk import Chunk
-        return [Chunk(*r[:8], list(array.array("f", r[8])))
-                for r in self._query("select * from chunks order by platform, chat_id, position")]
+        return [self._chunk(r) for r in self._query("select * from chunks order by platform, chat_id, position")]
+
+    def search(self, request: str, k: int = 5) -> list[Hit]:
+        """Chunks matching the Request by keyword and by meaning, fused, best first. Never refreshes the index."""
+        if not request.strip():
+            raise ValueError("Request is empty; type some words to search for")
+        if k < 1:
+            raise ValueError(f"-k must be 1 or more, got {k}")
+        self.keyword_only = False
+        rows = {r[0]: r for r in self._query("select * from chunks")}
+        if not rows:
+            return []
+        keyword = []
+        words = re.findall(r"\w+", request)
+        if words:
+            # each word a quoted literal term, so user text is never read as FTS5 syntax
+            match = " OR ".join('"' + w.replace('"', '""') + '"' for w in words)
+            try:
+                keyword = [r[0] for r in self._query("select id from chunks_fts where chunks_fts match ? "
+                                                     "order by bm25(chunks_fts) limit ?", (match, KEYWORD_TOP))]
+            except sqlite3.OperationalError as e:
+                if "no such table" not in str(e):
+                    raise  # only an index from before the keyword table is tolerated: reindex rebuilds it
+        q = self._request_vector(request)
+        self.keyword_only = q is None
+        # vectors are unit length, so cosine similarity is a dot product
+        sim = {} if q is None else {i: sum(a * b for a, b in zip(q, array.array("f", r[8]))) for i, r in rows.items()}
+        meaning = sorted(sim, key=sim.get, reverse=True)[:MEANING_TOP]
+        fused = {}
+        for rank, i in enumerate(keyword, 1):
+            fused[i] = 1 / (FUSION_K + rank)
+        for i in meaning:  # equal similarity, equal rank: ties carry no meaning signal
+            fused[i] = fused.get(i, 0) + 1 / (FUSION_K + 1 + sum(sim[j] > sim[i] for j in meaning))
+        best = sorted(fused, key=fused.get, reverse=True)[:RERANK_TOP]
+        scores = dict(zip(best, self.reranker.rerank(request, [rows[i][7] for i in best])))
+        best.sort(key=scores.get, reverse=True)  # stable: ties keep fused order
+        return [Hit(self._chunk(rows[i]), n, scores[i]) for n, i in enumerate(best[:k], 1)]
+
+    def _request_vector(self, request: str):
+        """The Request embedded with the live index's model, or None (keyword only) if that model is unusable."""
+        if not self.reembed_pending():
+            return self.embedder.embed([request])[0]
+        live = self.index_embedder()
+        try:
+            return self.embedders[live]().embed([request])[0]
+        except (KeyError, RuntimeError) as e:  # unknown name, or a hosted model whose key is gone
+            import sys
+            print(f"warning: the index's model {live} cannot be used ({e}); keyword search only. "
+                  "Run: memoryforall reindex", file=sys.stderr)
+            return None
+
+    def index_embedder(self) -> str | None:
+        """Name of the embedder the live index was built with; differs from embedder.name while a re-embed is pending."""
+        r = self._query("select embedder from meta")
+        return r[0][0] if r else None
+
+    def reembed_pending(self) -> bool:
+        """True while the live index was built with a different model than the search Mode's embedder."""
+        return self.index_embedder() not in (None, self.embedder.name)
 
     def last_refreshed(self) -> str | None:
         r = self._query("select last_refreshed from meta")
