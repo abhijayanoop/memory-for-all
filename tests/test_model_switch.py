@@ -52,11 +52,13 @@ def test_search_uses_live_model_until_refresh(built):
     assert kb.index_embedder() == A.name
     assert ids(kb.search("zebra"))[0] == "a"
     assert A.used == [["zebra"]] and not B.used
+    assert not kb.keyword_only and kb.reembed_pending()
     kb.refresh_index()
     A.used, B.used = [], []
     assert kb.index_embedder() == B.name
     assert ids(kb.search("zebra"))[0] == "a"
     assert B.used == [["zebra"]] and not A.used
+    assert not kb.reembed_pending()
 
 
 def test_failed_refresh_leaves_search_on_old_model(built):
@@ -73,6 +75,7 @@ def test_unusable_old_model_falls_back_to_keyword_only(built, table, capsys):
     kb = KnowledgeBase(built, B(), table)
     assert ids(kb.search("zebra")) == ["a"]  # keyword only: the boat Chunk has no shared word
     assert "keyword" in capsys.readouterr().err.lower()
+    assert kb.keyword_only and kb.reembed_pending()
     assert not B.used  # never embeds the Request with a model that does not match the index
 
 

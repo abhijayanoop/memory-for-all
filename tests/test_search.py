@@ -208,3 +208,85 @@ def test_real_local_models_search_end_to_end(tmp_path):
     kb.refresh_index()
     hits = kb.search("baking bread at home", k=2)
     assert ids(hits)[0] == "bread" and len(hits) == 2 and hits[0].score > hits[1].score
+
+
+# --- review fixes ---
+
+class SameVector:
+    """Every text gets the same vector, so the meaning side ranks all Chunks equal and only keywords decide."""
+    name, dimension = "same", 2
+
+    def embed(self, texts):
+        return [[0.6, 0.8] for _ in texts]
+
+
+def test_rename_leaves_one_set_of_chunks(tmp_path, fake):
+    kb = make(tmp_path, fake, [conv("a", "zebra stripes")])
+    before = [c.id for c in kb.chunks()]
+    kb.save(validate({"platform": "claude", "chat_id": "a", "title": "Renamed", "created": "2025-01-01T00:00:00Z",
+                      "updated": "2025-02-01T00:00:00Z", "messages": [{"sender": "user", "text": "zebra stripes"},
+                                                                      {"sender": "assistant", "text": "ok"}]}))
+    kb.refresh_index()
+    assert [c.id for c in kb.chunks()] == before
+    db = sqlite3.connect(kb.index_path)
+    assert db.execute("select count(*) from chunks_fts").fetchone()[0] == len(before)
+    db.close()
+    assert [h.chunk.title for h in kb.search("zebra", k=50)] == ["Renamed"] * len(before)
+
+
+@pytest.mark.parametrize("k", [0, -1])
+def test_k_below_one_rejected(tmp_path, fake, k):
+    kb = make(tmp_path, fake, [conv("a", "zebra")])
+    with pytest.raises(ValueError, match="k"):
+        kb.search("zebra", k=k)
+
+
+def test_cli_k_below_one_exits_2(cfg, fake, capsys):
+    assert main(["search", "zebra", "-k", "0", "--kb", str(cfg / "kb")], embedder=fake) == 2
+    assert "-k" in capsys.readouterr().err
+
+
+def test_other_keyword_table_errors_are_raised(tmp_path, fake):
+    kb = make(tmp_path, fake, [conv("a", "zebra")])
+    db = sqlite3.connect(kb.index_path)  # a plain table where the FTS table should be: MATCH fails
+    db.executescript("drop table chunks_fts; create table chunks_fts(id, text);")
+    db.close()
+    with pytest.raises(sqlite3.OperationalError):
+        kb.search("zebra")
+
+
+def test_keyword_side_orders_by_bm25(tmp_path):
+    kb = make(tmp_path, SameVector(), [conv("a", "zebra one two three"), conv("b", "zebra zebra one two"),
+                                       conv("c", "zebra zebra zebra one"), conv("d", "boat engine")])
+    assert ids(kb.search("zebra", k=4)) == ["c", "b", "a", "d"]
+
+
+@pytest.mark.parametrize("request_text", ['"zebra', "zebra*", "-zebra", "col:zebra", "zebra AND", "NEAR(zebra",
+                                          "(zebra) [x] {y}", "zebra 🦓", "AND zebra OR NOT"])
+def test_odd_requests_still_find_keyword_match(tmp_path, request_text):
+    kb = make(tmp_path, SameVector(), [conv("b", "boat engine"), conv("a", "zebra stripes"), conv("c", "sourdough")])
+    assert ids(kb.search(request_text))[0] == "a"
+
+
+def test_changed_text_leaves_no_stale_keyword_rows(tmp_path):
+    kb = make(tmp_path, SameVector(), [conv("a", "alpha alpha alpha"),
+                                       conv("c", "alpha in a much longer chat about many other things entirely")])
+    next(tmp_path.rglob("*-a.md")).write_bytes(render(conv("a", "gamma")).encode())
+    kb.refresh_index()
+    assert ids(kb.search("alpha", k=1)) == ["c"]
+    assert ids(kb.search("gamma", k=1)) == ["a"]
+
+
+def test_cli_hints_reindex_when_files_newer_than_index(cfg, fake, capsys):
+    import os
+    kbdir = cfg / "kb"
+    KnowledgeBase(kbdir, fake).save(conv("a", "zebra stripes"))
+    main(["reindex", "--kb", str(kbdir)], embedder=fake)
+    capsys.readouterr()
+    main(["search", "zebra", "--kb", str(kbdir)], embedder=fake)
+    assert "reindex" not in capsys.readouterr().out
+    t = (kbdir / ".index" / "index.sqlite").stat().st_mtime + 10
+    os.utime(next(kbdir.rglob("*-a.md")), (t, t))
+    main(["search", "zebra", "--kb", str(kbdir)], embedder=fake)
+    out = capsys.readouterr().out
+    assert "1. a" in out and "reindex" in out
