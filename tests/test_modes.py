@@ -43,13 +43,13 @@ def test_mode_search_hosted_warns_and_saves_keeping_kb(cfg, capsys, monkeypatch)
     assert settings(cfg)["search_mode"] == "hosted"
 
 
-@pytest.mark.parametrize("provider,key", [("claude", "ANTHROPIC_API_KEY"), ("openai", "OPENAI_API_KEY")])
-def test_mode_pack_hosted_checks_provider_key(cfg, capsys, monkeypatch, provider, key):
-    assert main(["mode", "pack", "hosted", "--provider", provider]) == 2
+@pytest.mark.parametrize("api,key", [("claude", "ANTHROPIC_API_KEY"), ("openai", "OPENAI_API_KEY")])
+def test_mode_pack_hosted_checks_api_key(cfg, capsys, monkeypatch, api, key):
+    assert main(["mode", "pack", "hosted", "--api", api]) == 2
     assert key in capsys.readouterr().err
     monkeypatch.setenv(key, "secret-123")
-    assert main(["mode", "pack", "hosted", "--provider", provider]) == 0
-    assert f"pack: hosted ({provider})" in capsys.readouterr().out
+    assert main(["mode", "pack", "hosted", "--api", api]) == 0
+    assert f"pack: hosted ({api})" in capsys.readouterr().out
     assert settings(cfg)["pack_mode"] == "hosted"
     assert main(["mode", "pack", "local"]) == 0
     assert settings(cfg)["pack_mode"] == "local"

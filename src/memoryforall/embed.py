@@ -6,7 +6,7 @@ import time
 import urllib.error
 from urllib.request import Request, urlopen
 
-KEYS = {"openai": "OPENAI_API_KEY", "claude": "ANTHROPIC_API_KEY"}  # provider -> key's environment variable
+KEYS = {"openai": "OPENAI_API_KEY", "claude": "ANTHROPIC_API_KEY"}  # hosted API -> key's environment variable
 
 
 class FastEmbedder:

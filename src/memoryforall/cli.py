@@ -15,7 +15,7 @@ def settings_file() -> Path:
 
 
 # Allowed values per setting; the first is the default.
-MODES = {"search_mode": ("local", "hosted"), "pack_mode": ("local", "hosted"), "pack_provider": ("openai", "claude")}
+MODES = {"search_mode": ("local", "hosted"), "pack_mode": ("local", "hosted"), "pack_api": ("openai", "claude")}
 
 
 def load_settings(sf: Path) -> dict:
@@ -41,11 +41,11 @@ def save_settings(sf: Path, s: dict) -> None:
 
 
 def modes_text(s: dict) -> str:
-    pack = s["pack_mode"] + (f" ({s['pack_provider']})" if s["pack_mode"] == "hosted" else "")
+    pack = s["pack_mode"] + (f" ({s['pack_api']})" if s["pack_mode"] == "hosted" else "")
     return f"search: {s['search_mode']}\npack: {pack}"
 
 
-def set_mode(sf: Path, s: dict, which: str, value: str, provider: str | None) -> int:
+def set_mode(sf: Path, s: dict, which: str, value: str, api: str | None) -> int:
     if which == "search":
         if value == "hosted":
             if not os.environ.get(KEYS["openai"]):
@@ -55,11 +55,11 @@ def set_mode(sf: Path, s: dict, which: str, value: str, provider: str | None) ->
             print("Chunks (on reindex) and Requests (on search) will be sent to OpenAI. Run reindex to re-embed.")
         s["search_mode"] = value
     else:
-        provider = provider or s["pack_provider"]
-        if value == "hosted" and not os.environ.get(KEYS[provider]):
-            print(f"Hosted pack-writing with {provider} needs {KEYS[provider]} in the environment.", file=sys.stderr)
+        api = api or s["pack_api"]
+        if value == "hosted" and not os.environ.get(KEYS[api]):
+            print(f"Hosted pack-writing with {api} needs {KEYS[api]} in the environment.", file=sys.stderr)
             return 2
-        s["pack_mode"], s["pack_provider"] = value, provider
+        s["pack_mode"], s["pack_api"] = value, api
     save_settings(sf, s)
     print(modes_text(s))
     return 0
@@ -80,7 +80,7 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS) -> int:
     m = sub.add_parser("mode")
     m.add_argument("which", nargs="?", choices=("search", "pack"))
     m.add_argument("value", nargs="?", choices=("local", "hosted"))
-    m.add_argument("--provider", choices=tuple(KEYS))
+    m.add_argument("--api", choices=tuple(KEYS))
     a = p.parse_args(argv)
     sf = settings_file()
     if a.cmd == "set-kb":
@@ -101,9 +101,9 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS) -> int:
         return 2
     if a.cmd == "mode":
         if a.which and a.value:
-            return set_mode(sf, s, a.which, a.value, a.provider)
-        if a.which or a.provider:
-            p.error("usage: mode [search local|hosted | pack local|hosted [--provider openai|claude]]")
+            return set_mode(sf, s, a.which, a.value, a.api)
+        if a.which or a.api:
+            p.error("usage: mode [search local|hosted | pack local|hosted [--api openai|claude]]")
         print(modes_text(s))
         return 0
     kb_path = a.kb or s.get("kb")

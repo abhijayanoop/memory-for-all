@@ -90,10 +90,10 @@ When I switch the search Mode, the choice is recorded at once. The next reindex 
 2. **Re-ranker interface:** `name`, `rerank(request, texts) -> list of scores` (higher is better, raw model scores). The real version wraps fastembed's cross-encoder with `Xenova/ms-marco-MiniLM-L-6-v2`, loaded on first use. Tests use a deterministic fake.
 3. **Embedder interface** (from spec 1, unchanged shape): `name`, `dimension`, `embed(texts)`. A second real implementation is added for hosted search: OpenAI `text-embedding-3-small` (1536 dimensions), batched, retrying on rate limits, reading the key from `OPENAI_API_KEY`. Per-model query prefixes, if a future model needs them, live inside its embedder. Neither v1 model needs one.
 4. **Embedder lookup:** a fixed table from embedder name to constructor, covering the two real embedders. Tests pass their own table of fakes.
-5. **Settings** (the existing settings file in the user's config directory) gains `search_mode` (`local` | `hosted`), `pack_mode` (`local` | `hosted`) and `pack_provider` (`openai` | `claude`, used only when `pack_mode` is hosted). Missing values mean local. Unknown values are an error naming the file and the bad value.
+5. **Settings** (the existing settings file in the user's config directory) gains `search_mode` (`local` | `hosted`), `pack_mode` (`local` | `hosted`) and `pack_api` (`openai` | `claude`, used only when `pack_mode` is hosted). Missing values mean local. Unknown values are an error naming the file and the bad value.
 6. **Command line**, extended:
    - `search "<request>" [-k N]` prints numbered hits: title, Platform, date, Chunk ID, kind if notes, score, and the first ~200 characters of text. It prints a notice when a re-embed is pending.
-   - `mode` shows both Modes. `mode search local|hosted` and `mode pack local|hosted [--provider openai|claude]` set them.
+   - `mode` shows both Modes. `mode search local|hosted` and `mode pack local|hosted [--api openai|claude]` set them.
    - `status` adds both Modes, the live index's model, "re-embed pending" when it differs from the target, and each relevant key as `present` or `missing`.
 
 ### Search pipeline
@@ -121,7 +121,7 @@ When I switch the search Mode, the choice is recorded at once. The next reindex 
 
 ### Pack-writing Mode
 
-- This spec only stores, validates and shows the pack-writing Mode and checks the key for the chosen provider (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`) when set to hosted. The local default is Qwen3-4B-Instruct-2507 through Ollama (from ticket 08). Calling any writing model is spec 3.
+- This spec only stores, validates and shows the pack-writing Mode and checks the key for the chosen API (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`) when set to hosted. The local default is Qwen3-4B-Instruct-2507 through Ollama (from ticket 08). Calling any writing model is spec 3.
 
 ### Privacy
 

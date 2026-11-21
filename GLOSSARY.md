@@ -48,6 +48,10 @@ _Avoid_: Latest answer, final decision
 The user's choice of where the AI models run: hosted (using their own OpenAI or Claude key) or fully local (open-source models on their computer).
 _Avoid_: Provider, backend
 
+**API**:
+In hosted Mode, which company's API (OpenAI or Claude) the user's own key is for, for example the one that writes Context Packs (`--api openai|claude`). Not a Platform: it is the model service the program calls, not a chat service the user talks to.
+_Avoid_: Provider, vendor
+
 **Test Set**:
 A fixed list of questions from the user's real Conversations, each with the right Chunks marked, used to measure quality after every change. It includes questions whose answer is not in the Knowledge Base.
 _Avoid_: Benchmark, eval data
