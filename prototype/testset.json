@@ -1,0 +1,8 @@
+[
+ {"q":"Which database did I choose for PennyPilot?","answerable":true,"expect":["c2"],"expect_old":"c1","terms":["sqlite","litestream"]},
+ {"q":"How do I handle recurring transactions in PennyPilot?","answerable":true,"expect":["c1"],"terms":["recurring_rules","nightly"]},
+ {"q":"Where am I staying in Kyoto?","answerable":true,"expect":["c3"],"terms":["ryokan","april"]},
+ {"q":"What API framework should PennyPilot use?","answerable":true,"expect":["c2"],"terms":["fastapi","sqlmodel"]},
+ {"q":"What was my gym workout plan?","answerable":false,"expect":[],"terms":[]},
+ {"q":"Which flight airline did I book to Japan?","answerable":false,"expect":[],"terms":[]}
+]
