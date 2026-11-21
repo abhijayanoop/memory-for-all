@@ -4,7 +4,7 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] A unit over the cap is split: the answer breaks at blank lines first, then single line breaks, then sentence ends, packed greedily; a hard cut happens only when one segment alone exceeds the room left
 - [ ] Every piece is `Chat: <title>`, then `User: <first 300 characters of the question>`, then `Assistant: <piece>`, and is within 1,800 characters including the prefix
@@ -13,3 +13,7 @@
 - [ ] Non-empty `## My notes` text becomes Chunks of kind `notes` with prefix `Chat: <title>` and heading `My notes:`, split by the same size rules, never merged with exchanges
 - [ ] The rules version constant is bumped
 - [ ] Pure Chunker tests with the fake embedder cover each rule above, including forcing "same subject" and "different subject"
+
+## Answer
+
+Implemented on branch `integration/knowledge-base-and-chunking`.

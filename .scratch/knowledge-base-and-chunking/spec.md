@@ -1,6 +1,6 @@
 # Spec 1: Knowledge Base and Chunking
 
-Status: ready-for-agent
+Status: resolved
 
 Source decisions: `docs/spec-plan.md` (spec 1), `.scratch/memory-for-all-v1/issues/09-kb-file-layout.md`, `.scratch/memory-for-all-v1/issues/03-chunk-rules.md`, `docs/adr/0001-markdown-source-of-truth.md`. Vocabulary: `GLOSSARY.md`.
 

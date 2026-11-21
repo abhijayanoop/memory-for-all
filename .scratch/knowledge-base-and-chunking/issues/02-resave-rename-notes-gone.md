@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] The Knowledge Base `save` returns `created`, `updated`, `renamed+updated` or `unchanged`
 - [ ] Re-saving with a newer `updated` rewrites the file; the same or an older `updated` leaves the file byte-for-byte unchanged
@@ -13,3 +13,7 @@
 - [ ] `mark_gone(platform, chat_id, noticed_at)` sets status `no longer on the Platform` and `gone_since`; `mark_present` sets it back and removes `gone_since`; only the front matter changes and the file is never deleted
 - [ ] A simulated failure during a rewrite leaves the previous file intact
 - [ ] `import` prints counts of new, updated, unchanged and rejected files
+
+## Answer
+
+Implemented on branch `integration/knowledge-base-and-chunking`.

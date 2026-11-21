@@ -4,10 +4,14 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] The Knowledge Base path is stored in a small settings file in the user's config directory, and a command sets it
 - [ ] Commands use the saved path when no `--kb` flag is given; the flag overrides it
 - [ ] Running with no saved path and no flag gives a clear message suggesting a default folder in the user's Documents
 - [ ] The folder is created on first use; paths containing spaces work
 - [ ] Tests use a temporary config directory and never touch the real one
+
+## Answer
+
+Implemented on branch `integration/knowledge-base-and-chunking`.

@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] The embedder interface has `name`, `dimension` and `embed(texts)`, returning unit-length vectors; the real version wraps fastembed `BAAI/bge-small-en-v1.5`; a fake test embedder returns deterministic vectors
 - [ ] The Chunker is a pure function: Conversation (plus notes) and embedder in, Chunks out
@@ -15,3 +15,7 @@
 - [ ] `reindex` builds the index from scratch, and `status` shows Chunk count and last refresh
 - [ ] One slow test, marked to be skippable, runs the real model on a small fixture: vectors are 384-dimensional and unit-length, and chunking runs end to end
 - [ ] One command-line smoke test runs `import`, `reindex` and `status` on a fixture into a temporary Knowledge Base and checks exit codes and counts
+
+## Answer
+
+Implemented on branch `integration/knowledge-base-and-chunking`.

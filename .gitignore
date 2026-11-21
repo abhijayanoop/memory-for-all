@@ -1,4 +1,6 @@
 prototype/.venv/
+.venv/
 __pycache__/
 *.pyc
+.pytest_cache/
 prototype/data-real/
