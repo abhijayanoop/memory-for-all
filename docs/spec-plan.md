@@ -12,10 +12,11 @@ One spec per feature, built in this order. For each spec the flow is: settle ope
 | 4 | Quality | Match Score, "not found" floor, Test Set from real chats, four quality checks. | Ticket 05 (needs 03 and 04) |
 | 5 | Sync (ChatGPT and Claude) | A Reader per Platform, layered fallback, "sync degraded" banner, guided export, report button. | Ticket 02: Claude org choice; archived, branched, project chats |
 | 6 | Extension | Local link with pairing key (ticket 06), preview, text insertion with clipboard fallback (ticket 07), "working" indicator. | None (06 and 07 done) |
+| 7 | Scale and Speed | Measure search, reindex and Context Pack time at 1,000, 10,000 and a few hundred thousand Conversations, then fix what is slow: brute-force pure-Python meaning search (move to numpy, then an approximate nearest-neighbour index if needed), the per-search scan of every file for the reindex hint, re-ranker cost, full re-embed time and index size. Every change must keep the spec 4 quality checks passing on the Test Set, so speed never costs Context Pack quality. | Target scale and speed budget (for example "search under 2 s at 100,000 Conversations on the target laptop") |
 
 ## Why this order
 
-Specs 1 to 4 are Python only and testable without a browser. The riskier browser work (5 and 6) comes last. Sync (5) comes before the Extension (6) because the Extension needs synced data. 5 and 6 can be swapped to see something in the browser sooner.
+Specs 1 to 4 are Python only and testable without a browser. The riskier browser work (5 and 6) comes last. Sync (5) comes before the Extension (6) because the Extension needs synced data. 5 and 6 can be swapped to see something in the browser sooner. Scale and Speed (7) comes last so it can be measured on real synced data and checked against spec 4's Test Set.
 
 ## Not in v1 (later specs)
 
