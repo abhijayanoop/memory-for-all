@@ -8,7 +8,7 @@ def conv(**kw):
     d = {"platform": "claude", "chat_id": "abc", "title": "Why? A: B/C", "created": "2026-10-02T11:14:00+02:00",
          "updated": "2026-10-03T00:00:00Z",
          "messages": [
-             {"sender": "user", "time": "2026-10-02T09:14:00Z", "text": "hi\n```\n### User · x\n```\n## Not notes 😀", "attachments": ["r.pdf"]},
+             {"sender": "user", "time": "2026-10-02T09:14:00Z", "text": "hi\n```\n### User x\n#### User · x\n```\n## Not notes 😀", "attachments": ["r.pdf"]},
              {"sender": "assistant", "time": None, "text": "", "attachments": []},
              {"sender": "assistant", "time": None, "text": "ok", "attachments": []}]}
     d.update(kw)
