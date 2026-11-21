@@ -117,12 +117,40 @@ class KnowledgeBase:
     def __init__(self, folder):
         self.folder = Path(folder)
 
-    def _find(self, c: Conversation) -> Path | None:
-        return next((self.folder / c.platform).glob(f"*/*-{c.chat_id}.md"), None)
+    def _find(self, platform: str, chat_id: str) -> Path | None:
+        return next((self.folder / platform).glob(f"*/*-{chat_id}.md"), None)
+
+    @staticmethod
+    def _write(dest: Path, text: str) -> None:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=dest.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+                f.write(text)
+            os.replace(tmp, dest)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
+
+    def _set_status(self, platform: str, chat_id: str, gone_since: str | None) -> None:
+        path = self._find(platform, chat_id)
+        if not path:
+            raise KeyError(chat_id)
+        front, rest = path.read_text(encoding="utf-8").split("\n---\n", 1)
+        lines = [l for l in front.split("\n") if not l.startswith(("status: ", "gone_since: "))]
+        lines += (["status: no longer on the Platform", f"gone_since: {gone_since}"] if gone_since
+                  else ["status: on platform"])
+        self._write(path, "\n".join(lines) + "\n---\n" + rest)
+
+    def mark_gone(self, platform: str, chat_id: str, noticed_at: str) -> None:
+        self._set_status(platform, chat_id, noticed_at)
+
+    def mark_present(self, platform: str, chat_id: str) -> None:
+        self._set_status(platform, chat_id, None)
 
     def save(self, c: Conversation) -> str:
-        """Return 'created', 'updated' or 'unchanged'."""
-        path = self._find(c)
+        """Return 'created', 'updated', 'renamed+updated' or 'unchanged'."""
+        path = self._find(c.platform, c.chat_id)
         notes = ""
         if path:
             old = parse(path.read_text(encoding="utf-8"))
@@ -130,12 +158,13 @@ class KnowledgeBase:
                 return "unchanged"
             notes = old[1] if old else ""
         dest = self.folder / c.platform / c.created[:7] / f"{c.created[:10]}-{slug(c.title)}-{c.chat_id}.md"
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=dest.parent, suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
-            f.write(render(c, notes))
-        os.replace(tmp, dest)
-        return "updated" if path else "created"
+        self._write(dest, render(c, notes))
+        if not path:
+            return "created"
+        if path == dest:
+            return "updated"
+        path.unlink()
+        return "renamed+updated"
 
     def conversations(self) -> list[Conversation]:
         out = []
