@@ -15,6 +15,7 @@ RULES_VERSION = 3  # 3: adds the chunks_fts keyword table
 KEYWORD_TOP = 50
 MEANING_TOP = 50
 FUSION_K = 60  # reciprocal rank fusion: score = sum of 1 / (FUSION_K + rank)
+RERANK_TOP = 20  # fused Chunks the re-ranker re-scores
 PLATFORMS = ("chatgpt", "claude")
 NOTES = "## My notes\n"
 _HEADING = re.compile(r"^### (User|Assistant)(?: · (\S+))?$", re.M)
@@ -129,12 +130,16 @@ class Hit:
 
 
 class KnowledgeBase:
-    def __init__(self, folder, embedder=None):
+    def __init__(self, folder, embedder=None, reranker=None):
         self.folder = Path(folder)
         if embedder is None:
             from .embed import FastEmbedder
             embedder = FastEmbedder()
         self.embedder = embedder
+        if reranker is None:
+            from . import rerank
+            reranker = rerank.FastReranker()
+        self.reranker = reranker
         self.index_path = self.folder / ".index" / "index.sqlite"
 
     def _find(self, platform: str, chat_id: str) -> Path | None:
@@ -347,8 +352,10 @@ class KnowledgeBase:
         for ranking in (keyword, meaning):
             for rank, i in enumerate(ranking, 1):
                 fused[i] = fused.get(i, 0) + 1 / (FUSION_K + rank)
-        best = sorted(fused, key=fused.get, reverse=True)
-        return [Hit(self._chunk(rows[i]), n) for n, i in enumerate(best[:k], 1)]
+        best = sorted(fused, key=fused.get, reverse=True)[:RERANK_TOP]
+        scores = dict(zip(best, self.reranker.rerank(request, [rows[i][7] for i in best])))
+        best.sort(key=scores.get, reverse=True)  # stable: ties keep fused order
+        return [Hit(self._chunk(rows[i]), n, scores[i]) for n, i in enumerate(best[:k], 1)]
 
     def last_refreshed(self) -> str | None:
         r = self._query("select last_refreshed from meta")
