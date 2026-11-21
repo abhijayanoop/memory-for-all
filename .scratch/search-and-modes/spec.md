@@ -1,6 +1,6 @@
 # Spec 2: Search and Modes
 
-Status: ready-for-agent
+Status: resolved
 
 Source decisions: `docs/spec-plan.md` (spec 2), `.scratch/memory-for-all-v1/issues/08-local-models.md` and `research/08-local-models.md`, `docs/adr/0001-markdown-source-of-truth.md`, spec 1 (`.scratch/knowledge-base-and-chunking/spec.md`). Vocabulary: `GLOSSARY.md`.
 
