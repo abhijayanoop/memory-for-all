@@ -47,6 +47,53 @@ def test_round_trip_and_notes_kept(tmp_path):
     assert p.read_text(encoding="utf-8").endswith("## My notes\nmy note\n")
 
 
+def test_resave_rename_and_older_unchanged(tmp_path):
+    kb = KnowledgeBase(tmp_path)
+    kb.save(validate(conv()))
+    p = next(tmp_path.rglob("*.md"))
+    p.write_text(p.read_text(encoding="utf-8") + "mine\n", encoding="utf-8")
+    before = p.read_bytes()
+    assert kb.save(validate(conv(updated="2026-10-01T00:00:00Z", title="other"))) == "unchanged"
+    assert p.read_bytes() == before
+    r = validate(conv(title="New title", created="2026-11-05T00:00:00Z", updated="2026-12-01T00:00:00Z"))
+    assert kb.save(r) == "renamed+updated"
+    (q,) = tmp_path.rglob("*.md")
+    assert q.name == "2026-11-05-New-title-abc.md" and q.read_text(encoding="utf-8").endswith("## My notes\nmine\n")
+    r.updated = "2026-12-02T00:00:00Z"
+    assert kb.save(r) == "updated"
+
+
+def test_mark_gone_and_present_keep_notes(tmp_path):
+    kb = KnowledgeBase(tmp_path)
+    kb.save(validate(conv()))
+    p = next(tmp_path.rglob("*.md"))
+    p.write_text(p.read_text(encoding="utf-8") + "mine\n", encoding="utf-8")
+    orig = p.read_text(encoding="utf-8")
+    kb.mark_gone("claude", "abc", "2026-11-01T00:00:00Z")
+    t = p.read_text(encoding="utf-8")
+    assert "status: no longer on the Platform\ngone_since: 2026-11-01T00:00:00Z\n" in t and t.endswith("mine\n")
+    kb.mark_present("claude", "abc")
+    assert p.read_text(encoding="utf-8") == orig
+
+
+def test_failed_rewrite_leaves_previous_file(tmp_path, monkeypatch):
+    kb = KnowledgeBase(tmp_path)
+    c = validate(conv())
+    kb.save(c)
+    p = next(tmp_path.rglob("*.md"))
+    before = p.read_bytes()
+
+    def boom(*a):
+        raise OSError("disk")
+    monkeypatch.setattr("memoryforall.kb.os.replace", boom)
+    c.updated = "2027-01-01T00:00:00Z"
+    try:
+        kb.save(c)
+    except OSError:
+        pass
+    assert p.read_bytes() == before and list(tmp_path.rglob("*.tmp")) == []
+
+
 def test_empty_conversation_round_trip():
     c = validate(conv(messages=[]))
     assert parse(render(c)) == (c, "")

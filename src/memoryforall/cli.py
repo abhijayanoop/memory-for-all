@@ -43,7 +43,7 @@ def main(argv=None) -> int:
         counts = Counter()
         for f in sorted(Path(a.folder).glob("*.json")):
             try:
-                counts[kb.save(validate(json.loads(f.read_text(encoding="utf-8"))))] += 1
+                counts[kb.save(validate(json.loads(f.read_text(encoding="utf-8")))).split("+")[-1]] += 1
             except ValueError as e:  # JSONDecodeError is a ValueError
                 counts["rejected"] += 1
                 print(f"rejected {f.name}: {e}", file=sys.stderr)
