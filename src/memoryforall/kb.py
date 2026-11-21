@@ -1,12 +1,16 @@
 """Knowledge Base: Conversation validation, Markdown file format, atomic save."""
 import json
+import array
+import hashlib
 import os
 import re
+import sqlite3
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+RULES_VERSION = 1
 PLATFORMS = ("chatgpt", "claude")
 NOTES = "## My notes\n"
 _HEADING = re.compile(r"^### (User|Assistant)(?: · (\S+))?$", re.M)
@@ -114,8 +118,13 @@ def parse(text: str) -> tuple[Conversation, str] | None:
 
 
 class KnowledgeBase:
-    def __init__(self, folder):
+    def __init__(self, folder, embedder=None):
         self.folder = Path(folder)
+        if embedder is None:
+            from .embed import FastEmbedder
+            embedder = FastEmbedder()
+        self.embedder = embedder
+        self.index_path = self.folder / ".index" / "index.sqlite"
 
     def _find(self, c: Conversation) -> Path | None:
         return next((self.folder / c.platform).glob(f"*/*-{c.chat_id}.md"), None)
@@ -144,3 +153,54 @@ class KnowledgeBase:
             if r:
                 out.append(r[0])
         return out
+
+    def refresh_index(self) -> dict:
+        """Rebuild the index from every Conversation file; swap it in only when complete."""
+        from .chunk import chunk
+        self.index_path.parent.mkdir(parents=True, exist_ok=True)
+        new = self.index_path.with_suffix(".new")
+        new.unlink(missing_ok=True)
+        db = sqlite3.connect(new)
+        db.executescript("""create table meta(embedder, dimension, rules_version, last_refreshed);
+            create table files(path, fingerprint, chat_id);
+            create table chunks(id, kind, platform, chat_id, title, date, position, text, vector);""")
+        counts = {"files": 0, "chunks": 0, "skipped": 0}
+        for p in sorted(self.folder.rglob("*.md")):
+            raw = p.read_bytes()
+            r = parse(raw.decode("utf-8"))
+            if not r:
+                counts["skipped"] += 1
+                continue
+            c, notes = r
+            db.execute("insert into files values (?,?,?)",
+                       (p.relative_to(self.folder).as_posix(), hashlib.sha256(raw).hexdigest(), c.chat_id))
+            for k in chunk(c, notes, self.embedder):
+                db.execute("insert into chunks values (?,?,?,?,?,?,?,?,?)",
+                           (k.id, k.kind, k.platform, k.chat_id, k.title, k.date, k.position, k.text,
+                            array.array("f", k.vector).tobytes()))
+                counts["chunks"] += 1
+            counts["files"] += 1
+        db.execute("insert into meta values (?,?,?,?)", (self.embedder.name, self.embedder.dimension, RULES_VERSION,
+                                                         datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")))
+        db.commit()
+        db.close()
+        os.replace(new, self.index_path)
+        return counts
+
+    def _query(self, sql):
+        if not self.index_path.exists():
+            return []
+        db = sqlite3.connect(self.index_path)
+        try:
+            return db.execute(sql).fetchall()
+        finally:
+            db.close()
+
+    def chunks(self) -> list:
+        from .chunk import Chunk
+        return [Chunk(*r[:8], list(array.array("f", r[8])))
+                for r in self._query("select * from chunks order by platform, chat_id, position")]
+
+    def last_refreshed(self) -> str | None:
+        r = self._query("select last_refreshed from meta")
+        return r[0][0] if r else None

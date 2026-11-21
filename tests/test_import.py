@@ -15,7 +15,7 @@ def conv(**kw):
     return d
 
 
-def test_import_writes_file_and_status(tmp_path, capsys):
+def test_import_writes_file_and_status(tmp_path, capsys, fake):
     src, kb = tmp_path / "src", tmp_path / "kb"
     src.mkdir()
     (src / "a.json").write_text(json.dumps(conv(title=None)))
@@ -29,13 +29,13 @@ def test_import_writes_file_and_status(tmp_path, capsys):
     assert "### User · 2026-10-02T09:14:00Z\n" in text and "attachment: r.pdf (not saved)" in text
     assert text.endswith("## My notes\n") and text.count("### Assistant") == 1
     (kb / "claude" / "plain.md").write_text("# just a note\n")
-    main(["status", "--kb", str(kb)])
-    assert capsys.readouterr().out.split() == ["chatgpt:", "0", "claude:", "1"]
+    main(["status", "--kb", str(kb)], embedder=fake)
+    assert capsys.readouterr().out.split()[:4] == ["chatgpt:", "0", "claude:", "1"]
 
 
-def test_round_trip_and_notes_kept(tmp_path):
+def test_round_trip_and_notes_kept(tmp_path, fake):
     c = validate(conv(title='a<>:"/\\|?*b ' + "x" * 80 + "..."))
-    kb = KnowledgeBase(tmp_path)
+    kb = KnowledgeBase(tmp_path, fake)
     assert kb.save(c) == "created"
     assert kb.conversations() == [c]
     assert kb.save(c) == "unchanged"
