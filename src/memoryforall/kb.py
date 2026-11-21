@@ -129,12 +129,13 @@ class Hit:
 
 
 class KnowledgeBase:
-    def __init__(self, folder, embedder=None):
+    def __init__(self, folder, embedder=None, embedders=None):
+        """embedder: the target (search Mode's) embedder. embedders: name -> constructor, used to embed
+        the Request with the live index's model while a re-embed is pending."""
+        from .embed import EMBEDDERS, FastEmbedder
         self.folder = Path(folder)
-        if embedder is None:
-            from .embed import FastEmbedder
-            embedder = FastEmbedder()
-        self.embedder = embedder
+        self.embedder = embedder or FastEmbedder()
+        self.embedders = EMBEDDERS if embedders is None else embedders
         self.index_path = self.folder / ".index" / "index.sqlite"
 
     def _find(self, platform: str, chat_id: str) -> Path | None:
@@ -339,9 +340,9 @@ class KnowledgeBase:
                                                      "order by bm25(chunks_fts) limit ?", (match, KEYWORD_TOP))]
             except sqlite3.OperationalError:
                 pass  # index from before the keyword table: reindex rebuilds it
-        q = self.embedder.embed([request])[0]
+        q = self._request_vector(request)
         # vectors are unit length, so cosine similarity is a dot product
-        sim = {i: sum(a * b for a, b in zip(q, array.array("f", r[8]))) for i, r in rows.items()}
+        sim = {} if q is None else {i: sum(a * b for a, b in zip(q, array.array("f", r[8]))) for i, r in rows.items()}
         meaning = sorted(sim, key=sim.get, reverse=True)[:MEANING_TOP]
         fused = {}
         for ranking in (keyword, meaning):
@@ -349,6 +350,24 @@ class KnowledgeBase:
                 fused[i] = fused.get(i, 0) + 1 / (FUSION_K + rank)
         best = sorted(fused, key=fused.get, reverse=True)
         return [Hit(self._chunk(rows[i]), n) for n, i in enumerate(best[:k], 1)]
+
+    def _request_vector(self, request: str):
+        """The Request embedded with the live index's model, or None (keyword only) if that model is unusable."""
+        live = self.index_embedder()
+        if live in (None, self.embedder.name):
+            return self.embedder.embed([request])[0]
+        try:
+            return self.embedders[live]().embed([request])[0]
+        except (KeyError, RuntimeError) as e:  # unknown name, or a hosted model whose key is gone
+            import sys
+            print(f"warning: the index's model {live} cannot be used ({e}); keyword search only. "
+                  "Run: memoryforall reindex", file=sys.stderr)
+            return None
+
+    def index_embedder(self) -> str | None:
+        """Name of the embedder the live index was built with; differs from embedder.name while a re-embed is pending."""
+        r = self._query("select embedder from meta")
+        return r[0][0] if r else None
 
     def last_refreshed(self) -> str | None:
         r = self._query("select last_refreshed from meta")
