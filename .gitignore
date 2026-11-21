@@ -1,4 +1,3 @@
-prototype/.venv/
+.venv/
 __pycache__/
-*.pyc
-prototype/data-real/
+.pytest_cache/
