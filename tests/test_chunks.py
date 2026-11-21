@@ -124,3 +124,48 @@ def test_real_model():
     cs = chunk(conv([("user", None, "Where should we stay in Lisbon?"), ("assistant", None, "Alfama.")]), "", e)
     assert e.dimension == 384 and len(cs) == 1 and len(cs[0].vector) == 384
     assert math.isclose(sum(x * x for x in cs[0].vector), 1, abs_tol=1e-3)
+
+
+class CountingEmbedder:
+    def __init__(self, inner):
+        self.inner, self.calls = inner, 0
+        self.name, self.dimension = inner.name, inner.dimension
+
+    def embed(self, texts):
+        self.calls += len(texts)
+        return self.inner.embed(texts)
+
+
+def test_refresh_only_what_changed(tmp_path, fake, capsys):
+    emb = CountingEmbedder(fake)
+    kb = KnowledgeBase(tmp_path, emb)
+    for cid in ("a", "b", "c"):
+        kb.save(conv([("user", None, "q " + cid), ("assistant", None, "ans")], chat_id=cid))
+    assert kb.refresh_index() == dict(added=3, changed=0, removed=0, skipped=0, chunks=3)
+    emb.calls = 0
+    assert kb.refresh_index()["added"] == 0 and emb.calls == 0
+
+    pa = next(tmp_path.rglob("*-a.md"))
+    pa.write_bytes(pa.read_bytes().replace(b"ans", b"edited ans"))
+    pb = next(tmp_path.rglob("*-b.md"))
+    pb.write_bytes(pb.read_bytes() + b"my note about pizza\n")
+    next(tmp_path.rglob("*-c.md")).unlink()
+    (tmp_path / "mine.md").write_text("# just my own note\n", encoding="utf-8")
+    kb.save(conv([("user", None, "new")], chat_id="d"))
+    r = kb.refresh_index()
+    assert r == dict(added=1, changed=2, removed=1, skipped=0, chunks=r["chunks"])
+    texts = " ".join(c.text for c in kb.chunks())
+    assert "edited ans" in texts and "pizza" in texts and "q c" not in texts
+
+
+def test_broken_file_skipped_and_kept(tmp_path, fake, capsys):
+    kb = KnowledgeBase(tmp_path, fake)
+    kb.save(conv([("user", None, "q"), ("assistant", None, "a")]))
+    kb.refresh_index()
+    p = next(tmp_path.rglob("*-abc.md"))
+    broken = p.read_bytes().replace(b'chat_id: "abc"', b"chat_id: abc")
+    p.write_bytes(broken)
+    r = kb.refresh_index()
+    assert r["skipped"] == 1 and r["removed"] == 0 and len(kb.chunks()) == 1
+    assert p.read_bytes() == broken
+    assert "skipped" in capsys.readouterr().err
