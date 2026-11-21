@@ -51,7 +51,7 @@ def main(argv=None, embedder=None) -> int:
         print(", ".join(f"{k}: {counts[k]}" for k in ("created", "updated", "unchanged", "rejected")))
     elif a.cmd == "reindex":
         n = kb.refresh_index()
-        print(f"files: {n['files']}, chunks: {n['chunks']}, skipped: {n['skipped']}")
+        print(", ".join(f"{k}: {n[k]}" for k in ("added", "changed", "removed", "skipped", "chunks")))
     else:
         by = Counter(c.platform for c in kb.conversations())
         for pl in ("chatgpt", "claude"):

@@ -184,37 +184,70 @@ class KnowledgeBase:
         return out
 
     def refresh_index(self) -> dict:
-        """Rebuild the index from every Conversation file; swap it in only when complete."""
+        """Re-chunk only new or changed Conversation files and drop Chunks of removed ones."""
+        import sys
         from .chunk import chunk
         self.index_path.parent.mkdir(parents=True, exist_ok=True)
-        new = self.index_path.with_suffix(".new")
-        new.unlink(missing_ok=True)
-        db = sqlite3.connect(new)
-        db.executescript("""create table meta(embedder, dimension, rules_version, last_refreshed);
-            create table files(path, fingerprint, chat_id);
-            create table chunks(id, kind, platform, chat_id, title, date, position, text, vector);""")
-        counts = {"files": 0, "chunks": 0, "skipped": 0}
+        db = sqlite3.connect(self.index_path)
+        try:
+            db.execute("select platform from files limit 1")  # old or missing schema: start fresh
+        except sqlite3.OperationalError:
+            db.executescript("""drop table if exists meta; drop table if exists files; drop table if exists chunks;
+                create table meta(embedder, dimension, rules_version, last_refreshed);
+                create table files(path, fingerprint, chat_id, platform);
+                create table chunks(id, kind, platform, chat_id, title, date, position, text, vector);""")
+        known = {r[0]: r[1:] for r in db.execute("select path, fingerprint, chat_id, platform from files")}
+        n = {"added": 0, "changed": 0, "removed": 0, "skipped": 0}
+
+        def drop(path):
+            _, chat_id, platform = known[path]
+            db.execute("delete from chunks where platform=? and chat_id=?", (platform, chat_id))
+            db.execute("delete from files where path=?", (path,))
+
+        seen = set()
         for p in sorted(self.folder.rglob("*.md")):
+            rel = p.relative_to(self.folder).as_posix()
             raw = p.read_bytes()
-            r = parse(raw.decode("utf-8"))
-            if not r:
-                counts["skipped"] += 1
+            try:
+                text = raw.decode("utf-8")
+                r = parse(text)
+                if r is None and rel in known:
+                    raise ValueError("no longer parses as a Conversation")
+                if r is None and text.startswith("---\n") and re.search(
+                        r"^(platform|chat_id|title): ", text.split("\n---\n")[0], re.M):
+                    raise ValueError("damaged header")
+            except (ValueError, KeyError) as e:
+                print(f"warning: skipped {rel}: {e}", file=sys.stderr)
+                n["skipped"] += 1
+                seen.add(rel)  # keep its previous Chunks
                 continue
+            if r is None:
+                continue  # not a Conversation
+            seen.add(rel)
+            fp = hashlib.sha256(raw).hexdigest()
+            if rel in known:
+                if known[rel][0] == fp:
+                    continue
+                drop(rel)
+                n["changed"] += 1
+            else:
+                n["added"] += 1
             c, notes = r
-            db.execute("insert into files values (?,?,?)",
-                       (p.relative_to(self.folder).as_posix(), hashlib.sha256(raw).hexdigest(), c.chat_id))
+            db.execute("insert into files values (?,?,?,?)", (rel, fp, c.chat_id, c.platform))
             for k in chunk(c, notes, self.embedder):
                 db.execute("insert into chunks values (?,?,?,?,?,?,?,?,?)",
                            (k.id, k.kind, k.platform, k.chat_id, k.title, k.date, k.position, k.text,
                             array.array("f", k.vector).tobytes()))
-                counts["chunks"] += 1
-            counts["files"] += 1
+        for rel in set(known) - seen:
+            drop(rel)
+            n["removed"] += 1
+        db.execute("delete from meta")
         db.execute("insert into meta values (?,?,?,?)", (self.embedder.name, self.embedder.dimension, RULES_VERSION,
                                                          datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")))
+        n["chunks"] = db.execute("select count(*) from chunks").fetchone()[0]
         db.commit()
         db.close()
-        os.replace(new, self.index_path)
-        return counts
+        return n
 
     def _query(self, sql):
         if not self.index_path.exists():
