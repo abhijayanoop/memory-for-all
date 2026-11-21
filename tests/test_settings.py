@@ -14,7 +14,7 @@ def test_set_kb_then_commands_use_it_and_create_folder(cfg, capsys):
     assert main(["set-kb", str(kb)]) == 0
     assert kb.is_dir()
     assert main(["status"]) == 0
-    assert capsys.readouterr().out.split()[-8:-4] == ["chatgpt:", "0", "claude:", "0"]
+    assert capsys.readouterr().out.split()[:4] == ["chatgpt:", "0", "claude:", "0"]
 
 
 def test_flag_overrides_saved_path(cfg, capsys):
