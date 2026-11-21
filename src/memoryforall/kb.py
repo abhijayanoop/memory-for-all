@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-RULES_VERSION = 1
+RULES_VERSION = 2
 PLATFORMS = ("chatgpt", "claude")
 NOTES = "## My notes\n"
 _HEADING = re.compile(r"^### (User|Assistant)(?: · (\S+))?$", re.M)
