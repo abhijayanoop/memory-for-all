@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Refresh fills and cleans an FTS5 keyword table in the same transaction as the Chunks (added, changed, removed files)
 - [ ] The rules version is bumped, so a spec-1 index is rebuilt through the existing safe swap and is then searchable
