@@ -112,7 +112,10 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS) -> int:
               f"(suggested: {Path.home() / 'Documents' / 'Memory for All'}), or pass --kb.", file=sys.stderr)
         return 2
     Path(kb_path).mkdir(parents=True, exist_ok=True)
-    kb = KnowledgeBase(kb_path, embedder or embedders[SEARCH_EMBEDDER[s["search_mode"]]]())
+    kb = KnowledgeBase(kb_path, embedder or embedders[SEARCH_EMBEDDER[s["search_mode"]]](), embedders)
+    if a.cmd in ("search", "status"):  # not for reindex: it must still recover a damaged index file
+        live = kb.index_embedder()
+        pending = live not in (None, kb.embedder.name)
     if a.cmd == "import":
         counts = Counter()
         for f in sorted(Path(a.folder).glob("*.json")):
@@ -135,6 +138,8 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS) -> int:
         except ValueError as e:
             print(e, file=sys.stderr)
             return 2
+        if pending:
+            print(f"note: re-embed pending; searching the index built with {live} until the next reindex")
         if not hits:
             print("No matches. If files changed, run: memoryforall reindex" if kb.chunks()
                   else "The index is empty or missing. Run: memoryforall reindex")
@@ -150,6 +155,7 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS) -> int:
         print(f"chunks: {len(kb.chunks())}")
         print(f"last refreshed: {kb.last_refreshed() or 'never'}")
         print(modes_text(s))
+        print(f"index model: {live or 'none'}" + (f" (re-embed pending to {kb.embedder.name})" if pending else ""))
         for key in sorted(set(KEYS.values())):
             print(f"{key}: {'present' if os.environ.get(key) else 'missing'}")
     return 0

@@ -181,7 +181,7 @@ class ReverseReranker:
 
 
 def test_reranker_order_decides_final_order(tmp_path):
-    kb = KnowledgeBase(tmp_path, TableEmbedder(), ReverseReranker())
+    kb = KnowledgeBase(tmp_path, TableEmbedder(), reranker=ReverseReranker())
     for c in [conv("a", "mixed kitten"), conv("b", "purr"), conv("c", "boat")]:
         kb.save(c)
     kb.refresh_index()
