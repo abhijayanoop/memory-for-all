@@ -5,6 +5,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from .embed import EMBEDDERS, SEARCH_EMBEDDER
 from .kb import KnowledgeBase, validate
 
 
@@ -64,7 +65,7 @@ def set_mode(sf: Path, s: dict, which: str, value: str, provider: str | None) ->
     return 0
 
 
-def main(argv=None, embedder=None) -> int:
+def main(argv=None, embedder=None, embedders=EMBEDDERS) -> int:
     p = argparse.ArgumentParser(prog="memoryforall")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("import").add_argument("folder")
@@ -111,7 +112,7 @@ def main(argv=None, embedder=None) -> int:
               f"(suggested: {Path.home() / 'Documents' / 'Memory for All'}), or pass --kb.", file=sys.stderr)
         return 2
     Path(kb_path).mkdir(parents=True, exist_ok=True)
-    kb = KnowledgeBase(kb_path, embedder)
+    kb = KnowledgeBase(kb_path, embedder or embedders[SEARCH_EMBEDDER[s["search_mode"]]]())
     if a.cmd == "import":
         counts = Counter()
         for f in sorted(Path(a.folder).glob("*.json")):
@@ -122,7 +123,11 @@ def main(argv=None, embedder=None) -> int:
                 print(f"rejected {f.name}: {e}", file=sys.stderr)
         print(", ".join(f"{k}: {counts[k]}" for k in ("created", "updated", "unchanged", "rejected")))
     elif a.cmd == "reindex":
-        n = kb.refresh_index()
+        try:
+            n = kb.refresh_index()
+        except RuntimeError as e:  # hosted embedder failures; the old index stays live
+            print(f"reindex failed, old index kept: {e}", file=sys.stderr)
+            return 1
         print(", ".join(f"{k}: {n[k]}" for k in ("added", "changed", "removed", "skipped", "chunks")))
     elif a.cmd == "search":
         try:
