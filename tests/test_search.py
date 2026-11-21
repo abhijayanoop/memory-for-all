@@ -159,6 +159,7 @@ def test_cli_search_prints_hits(cfg, fake, capsys):
     out = capsys.readouterr().out
     assert "1. Animal chat" in out and "claude" in out and "2025-01-01" in out and "claude:a:0" in out
     assert "zebra stripes" in out and "x" * 400 not in out
+    assert "score 1.000" in out  # the conftest re-ranker scores the only hit 1
 
 
 def test_cli_search_empty_index_says_reindex(cfg, fake, capsys):
@@ -169,3 +170,41 @@ def test_cli_search_empty_index_says_reindex(cfg, fake, capsys):
 def test_cli_search_empty_request(cfg, fake, capsys):
     assert main(["search", "  ", "--kb", str(cfg / "kb")], embedder=fake) == 2
     assert "empty" in capsys.readouterr().err.lower()
+
+
+class ReverseReranker:
+    """Scores later texts higher, so the re-ranked order is the reverse of the fused order."""
+    name = "reverse"
+
+    def rerank(self, request, texts):
+        return [float(n) for n in range(len(texts))]
+
+
+def test_reranker_order_decides_final_order(tmp_path):
+    kb = KnowledgeBase(tmp_path, TableEmbedder(), ReverseReranker())
+    for c in [conv("a", "mixed kitten"), conv("b", "purr"), conv("c", "boat")]:
+        kb.save(c)
+    kb.refresh_index()
+    # fused order is a, b, c (see test_chunk_in_both_lists_outranks_one_list)
+    hits = kb.search("kitten", k=2)
+    assert ids(hits) == ["c", "b"]
+    assert [h.rank for h in hits] == [1, 2] and [h.score for h in hits] == [2.0, 1.0]
+
+
+@pytest.mark.slow
+def test_real_reranker_prefers_relevant_text():
+    from memoryforall.rerank import FastReranker
+    s = FastReranker().rerank("how do I bake sourdough bread",
+                              ["Feed the starter, then proof the dough overnight before baking.", "The docker compose file failed."])
+    assert s[0] > s[1]
+
+
+@pytest.mark.slow
+def test_real_local_models_search_end_to_end(tmp_path):
+    kb = KnowledgeBase(tmp_path)
+    for c in [conv("bread", "how long should sourdough proof"), conv("car", "the car engine makes a noise"),
+              conv("trip", "where to stay in Lisbon")]:
+        kb.save(c)
+    kb.refresh_index()
+    hits = kb.search("baking bread at home", k=2)
+    assert ids(hits)[0] == "bread" and len(hits) == 2 and hits[0].score > hits[1].score
