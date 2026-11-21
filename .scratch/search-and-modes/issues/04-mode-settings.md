@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Settings file gains `search_mode`, `pack_mode`, `pack_provider`; missing values mean local; the Knowledge Base folder setting is kept when Modes change
 - [ ] Unknown Mode values in the settings file give an error naming the file and the bad value
