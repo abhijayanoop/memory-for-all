@@ -185,10 +185,37 @@ class KnowledgeBase:
 
     def refresh_index(self) -> dict:
         """Re-chunk only new or changed Conversation files and drop Chunks of removed ones."""
+        self.index_path.parent.mkdir(parents=True, exist_ok=True)
+        rebuild = not self._index_current()
+        target = self.index_path.with_name("index.sqlite.new") if rebuild else self.index_path
+        if rebuild:
+            target.unlink(missing_ok=True)
+        db = sqlite3.connect(target)
+        try:
+            return self._refresh(db, target, rebuild)
+        except BaseException:
+            db.close()
+            if rebuild:
+                target.unlink(missing_ok=True)  # old index stays live
+            raise
+
+    def _index_current(self) -> bool:
+        """True if the index exists, is readable and was built with the current embedder and rules."""
+        if not self.index_path.exists():
+            return False
+        try:
+            db = sqlite3.connect(self.index_path)
+            try:
+                return db.execute("select embedder, dimension, rules_version from meta").fetchall() == [
+                    (self.embedder.name, self.embedder.dimension, RULES_VERSION)]
+            finally:
+                db.close()
+        except sqlite3.Error:
+            return False
+
+    def _refresh(self, db, target, rebuild) -> dict:
         import sys
         from .chunk import chunk
-        self.index_path.parent.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(self.index_path)
         try:
             db.execute("select platform from files limit 1")  # old or missing schema: start fresh
         except sqlite3.OperationalError:
@@ -247,6 +274,8 @@ class KnowledgeBase:
         n["chunks"] = db.execute("select count(*) from chunks").fetchone()[0]
         db.commit()
         db.close()
+        if rebuild:
+            os.replace(target, self.index_path)  # swap in only when complete
         return n
 
     def _query(self, sql):
