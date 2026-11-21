@@ -4,7 +4,7 @@
 
 **Blocked by:** 04 (Mode settings)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Hosted embedder implements the existing embedder interface (`name`, `dimension`, `embed`) and returns unit-length vectors
 - [ ] Texts are sent in batches; rate-limit responses are retried with a wait; other errors raise a clear message without printing the key
