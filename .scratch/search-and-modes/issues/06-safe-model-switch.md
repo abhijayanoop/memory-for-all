@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 (Meaning search and rank fusion), 04 (Mode settings)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] The Knowledge Base is constructed with the target embedder and an embedder lookup by name; tests pass a table of fakes
 - [ ] A read action exposes the live index's embedder name
