@@ -10,7 +10,7 @@ A build-ready v1 spec for Memory for All: every open design question settled, re
 - Use the vocabulary in `GLOSSARY.md`; ADR `docs/adr/0001-markdown-source-of-truth.md` is settled.
 - Starting point: `docs/research/chat-export-mechanisms.md` (export and sync research, with live Claude probe results) and the throwaway `prototype/`.
 - Syncing from the logged-in tab is a user-triggered, throttled, local-only gray area; both platforms' terms forbid automated access.
-- Settled earlier: one user first; ChatGPT and Claude in v1; Markdown Knowledge Base; hybrid search with re-ordering; Context Pack = summary + key decisions + source Chunks; Current Decision wins and notes what it replaced; hosted or local Mode per job; Python local program, TypeScript extension; Test Set with four checks; loud-failure banner, guided export fallback, "Report this" button, one Reader per Platform.
+- Settled earlier: one user first; ChatGPT and Claude in v1; Markdown Knowledge Base; hybrid search with re-ordering; Context Pack = summary + key decisions + source Chunks; Current Decision wins and notes what it replaced; hosted or local Mode per job; Python local program, TypeScript extension; Test Set with five checks (see ticket 05); loud-failure banner, guided export fallback, "Report this" button, one Reader per Platform.
 
 ## Decisions so far
 
@@ -24,6 +24,9 @@ A build-ready v1 spec for Memory for All: every open design question settled, re
 
 - [insert-text-into-chats](issues/07-insert-text-into-chats.md): text insert is possible but fragile; files need .txt for Claude; fallback is copy-to-clipboard; live test needed
 - [local-models](issues/08-local-models.md): keep bge-small + MiniLM re-ranker locally; 3-4B 4-bit model for summaries; speed unmeasured
+- [claude-org-and-edge-chats](issues/02-claude-org-and-edge-chats.md): user picks the Claude organization once (saved, changeable); archived and project chats synced and marked; deleted chats keep their file
+- [context-pack-format](issues/04-context-pack-format.md): one 9,500-char limit; no model-written summary; every fact an exact quote labelled You/ChatGPT/Claude and checked by the program; each source must pass the floor; 2 model calls; Reader strips platform markup; live paste test moved to spec 6
+- [match-score-and-checks](issues/05-match-score-and-checks.md): needs from the Request alone, covered only by verified quotes; 20-question labelled Test Set outside the repo; five checks with Hallucination and Abstention kept separate
 
 ## Not yet specified
 
