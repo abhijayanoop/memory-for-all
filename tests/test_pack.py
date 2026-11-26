@@ -126,3 +126,40 @@ def test_local_pack_end_to_end(tmp_path, record_property):
     record_property('pack_seconds', result.seconds)
     assert not result.nothing_found and result.text.startswith('Context from my past chats')
     assert all(any(d.quote.lower() in h.chunk.text.lower() for h in result.sources) for d in result.decisions)
+
+
+def test_size_limit_cuts_lowest_ranked_source_first(tmp_path, fake):
+    quote = 'I chose the blue guitar for recording'
+    kb = make(tmp_path, fake, [conv('a', quote + ' ' + 'a' * 4800),
+                               conv('b', 'guitar source ' + 'b' * 4800)])
+    result = pack(kb, 'guitar', Writer({'subjects': [{'quotes': [quote]}]}))
+    assert len(result.text) <= 9500
+    assert not result.over_limit
+    assert quote in result.text.split('**Sources:**')[0]
+    assert f"[1] {result.sources[0].chunk.title}" in result.text
+    assert f"[2] {result.sources[1].chunk.title}" in result.text
+    assert result.sources[0].chunk.text in result.text
+    last = result.sources[-1].chunk
+    assert f'[{len(result.sources)}] {last.title} ({last.platform}, {last.date[:10]}) (text left out for length)' in result.text
+
+
+def test_size_limit_reports_oversized_decisions(tmp_path, fake):
+    quote = 'I chose the blue guitar for recording'
+    kb = make(tmp_path, fake, [conv('a', quote)])
+    result = pack(kb, 'guitar', Writer({'subjects': [{'quotes': [quote] * 300}]}))
+    assert result.over_limit
+    assert len(result.text) > 9500
+    assert quote in result.text.split('**Sources:**')[0]
+    assert '(text left out for length)' in result.text
+
+
+def test_cli_warns_when_decisions_exceed_limit(tmp_path, fake, capsys, monkeypatch):
+    from memoryforall.cli import main
+    monkeypatch.setenv('MEMORYFORALL_CONFIG_DIR', str(tmp_path / 'config'))
+    quote = 'I chose the blue guitar for recording'
+    kb = make(tmp_path / 'kb', fake, [conv('a', quote)])
+    writer = Writer({'subjects': [{'quotes': [quote] * 300}]})
+    assert main(['pack', 'guitar', '--kb', str(kb.folder)], embedder=fake, writer=writer) == 0
+    output = capsys.readouterr()
+    assert 'exceeds 9,500 characters' in output.err
+    assert 'exceeds 9,500 characters' not in output.out

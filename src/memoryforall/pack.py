@@ -6,6 +6,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
+PACK_LIMIT = 9500
 LOCAL_MODEL = "qwen3:4b-instruct"
 NOT_FOUND_FLOOR = 0.0  # untuned; spec 4 will calibrate against the Test Set
 
@@ -53,6 +54,7 @@ class PackResult:
     decisions: list
     dropped: list
     seconds: float
+    over_limit: bool
 
 
 def _normal(text):
@@ -65,7 +67,8 @@ def pack(kb, request, writer):
     decisions, dropped = [], []
 
     def result(text=None):
-        return PackResult(text, text is None, sources, decisions, dropped, time.monotonic() - started)
+        return PackResult(text, text is None, sources, decisions, dropped, time.monotonic() - started,
+                          text is not None and len(text) > PACK_LIMIT)
 
     if not sources:
         return result()
@@ -100,5 +103,14 @@ def pack(kb, request, writer):
     lines = ["Context from my past chats (Memory for All):", f"**Request:** {request}", "",
              "**Key decisions and facts:**"]
     lines.extend(f'- "{d.quote}" ' + " ".join(f"[{i}]" for i in d.sources) for d in decisions)
-    lines.extend(["", "**Sources:**", descriptions])
-    return result("\n".join(lines))
+    lines.extend(["", "**Sources:**"])
+    source_lines = [f"[{i}] {h.chunk.title} ({h.chunk.platform}, {h.chunk.date[:10]})\n{h.chunk.text}"
+                    for i, h in enumerate(sources, 1)]
+    text = "\n".join(lines + ["\n\n".join(source_lines)])
+    for i in range(len(source_lines) - 1, -1, -1):
+        if len(text) <= PACK_LIMIT:
+            break
+        h = sources[i]
+        source_lines[i] = f"[{i + 1}] {h.chunk.title} ({h.chunk.platform}, {h.chunk.date[:10]}) (text left out for length)"
+        text = "\n".join(lines + ["\n\n".join(source_lines)])
+    return result(text)

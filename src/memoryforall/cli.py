@@ -145,6 +145,8 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS, writer=None) -> int:
         if pending:
             print(f"note: re-embed pending; searching the index built with {live} until the next reindex", file=sys.stderr)
         print(f"Pack took {result.seconds:.2f} seconds", file=sys.stderr)
+        if result.over_limit:
+            print("Pack exceeds 9,500 characters after shortening all sources.", file=sys.stderr)
         for d in result.dropped:
             print(f"Dropped: {d.quote} ({d.reason})", file=sys.stderr)
         if result.nothing_found:
