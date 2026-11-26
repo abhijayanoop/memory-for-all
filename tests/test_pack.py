@@ -2,6 +2,52 @@ from memoryforall.pack import pack
 from test_search import conv, make
 
 
+def test_quote_rules_and_speaker(tmp_path, fake):
+    from memoryforall.kb import validate
+    c = validate({'platform': 'chatgpt', 'chat_id': 'a', 'title': 'Unique title words only',
+                  'created': '2025-01-01T00:00:00Z', 'updated': '2025-01-01T00:00:00Z',
+                  'messages': [{'sender': 'user', 'text': 'I prefer a wooden guitar'},
+                               {'sender': 'assistant', 'text': 'Choose a bright amplifier'}]})
+    kb = make(tmp_path, fake, [c])
+    writer = Writer({'subjects': [{'quotes': ['I prefer a wooden guitar', 'Choose a bright amplifier', 'yes',
+                                                'wooden guitar Assistant Choose a bright', 'Unique title words only'],
+                                   'speaker': 'user'}]})
+    result = pack(kb, 'guitar', writer)
+    assert '**You:** "I prefer a wooden guitar" [1] (2025-01-01)' in result.text
+    assert '**ChatGPT:** "Choose a bright amplifier" [1] (2025-01-01)' in result.text
+    assert [d.reason for d in result.dropped] == ['too short', 'spans two messages', 'from the title line']
+
+
+def test_matching_sources_choose_newest_and_ranked_speaker(tmp_path, fake):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    kb = make(tmp_path, fake, [conv('a', 'The shared guitar has six strings')])
+    hit = kb.search('guitar')[0]
+    text = 'The shared guitar has six strings'
+    first = replace(hit.chunk, text='Chat: first\nUser: ' + text, date='2025-01-01')
+    second = replace(hit.chunk, text='Chat: second\nAssistant: ' + text, platform='chatgpt', date='2025-02-01')
+    kb.search = lambda *args, **kwargs: [SimpleNamespace(chunk=c, score=1) for c in (first, second)]
+    result = pack(kb, 'guitar', Writer({'subjects': [{'quotes': [text]}]}))
+    assert '**ChatGPT:** "' + text + '" [1] [2] (2025-02-01)' in result.text
+    second.date = first.date
+    result = pack(kb, 'guitar', Writer({'subjects': [{'quotes': [text]}]}))
+    assert '**You:** "' + text + '" [1] [2] (2025-01-01)' in result.text
+
+
+def test_notes_and_cli_dropped_reason(tmp_path, fake, capsys, monkeypatch):
+    from memoryforall.cli import main
+    monkeypatch.setenv('MEMORYFORALL_CONFIG_DIR', str(tmp_path / 'config'))
+    kb = make(tmp_path / 'kb', fake, [conv('a', 'other things')])
+    p = next(kb.folder.rglob('*.md'))
+    p.write_bytes(p.read_bytes() + b'my own important guitar notes\n')
+    kb.refresh_index()
+    writer = Writer({'subjects': [{'quotes': ['my own important guitar notes', 'yes']}]})
+    assert main(['pack', 'guitar', '--kb', str(kb.folder)], embedder=fake, writer=writer) == 0
+    out = capsys.readouterr()
+    assert '**You:** "my own important guitar notes"' in out.out
+    assert 'Dropped: yes (too short)' in out.err
+
+
 class Writer:
     name = 'fake'
     def __init__(self, answer):
@@ -127,6 +173,42 @@ def test_local_pack_end_to_end(tmp_path, record_property):
     assert not result.nothing_found and result.text.startswith('Context from my past chats')
     assert all(any(d.quote.lower() in h.chunk.text.lower() for h in result.sources) for d in result.decisions)
 
+
+def test_size_limit_cuts_lowest_ranked_source_first(tmp_path, fake):
+    quote = 'I chose the blue guitar for recording'
+    kb = make(tmp_path, fake, [conv('a', quote + ' ' + 'a' * 4800),
+                               conv('b', 'guitar source ' + 'b' * 4800)])
+    result = pack(kb, 'guitar', Writer({'subjects': [{'quotes': [quote]}]}))
+    assert len(result.text) <= 9500
+    assert not result.over_limit
+    assert quote in result.text.split('**Sources:**')[0]
+    assert f"[1] {result.sources[0].chunk.title}" in result.text
+    assert f"[2] {result.sources[1].chunk.title}" in result.text
+    assert result.sources[0].chunk.text in result.text
+    last = result.sources[-1].chunk
+    assert f'[{len(result.sources)}] {last.title} ({last.platform}, {last.date[:10]}) (text left out for length)' in result.text
+
+
+def test_size_limit_reports_oversized_decisions(tmp_path, fake):
+    quote = 'I chose the blue guitar for recording'
+    kb = make(tmp_path, fake, [conv('a', quote)])
+    result = pack(kb, 'guitar', Writer({'subjects': [{'quotes': [quote] * 300}]}))
+    assert result.over_limit
+    assert len(result.text) > 9500
+    assert quote in result.text.split('**Sources:**')[0]
+    assert '(text left out for length)' in result.text
+
+
+def test_cli_warns_when_decisions_exceed_limit(tmp_path, fake, capsys, monkeypatch):
+    from memoryforall.cli import main
+    monkeypatch.setenv('MEMORYFORALL_CONFIG_DIR', str(tmp_path / 'config'))
+    quote = 'I chose the blue guitar for recording'
+    kb = make(tmp_path / 'kb', fake, [conv('a', quote)])
+    writer = Writer({'subjects': [{'quotes': [quote] * 300}]})
+    assert main(['pack', 'guitar', '--kb', str(kb.folder)], embedder=fake, writer=writer) == 0
+    output = capsys.readouterr()
+    assert 'exceeds 9,500 characters' in output.err
+    assert 'exceeds 9,500 characters' not in output.out
 @pytest.mark.parametrize('api,key', [('openai', 'OPENAI_API_KEY'), ('claude', 'ANTHROPIC_API_KEY')])
 def test_hosted_pack_requires_key_before_work(tmp_path, fake, monkeypatch, capsys, api, key):
     from memoryforall.cli import main
