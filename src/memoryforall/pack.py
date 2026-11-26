@@ -5,7 +5,7 @@ import re
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 PACK_LIMIT = 9500
 from .embed import KEYS
@@ -84,6 +84,9 @@ class Decision:
     sources: list[int]
     speaker: str
     date: str
+    replaced: list = field(default_factory=list)
+    acceptance: object = None
+    suggested: bool = False
 
 
 @dataclass
@@ -140,34 +143,71 @@ def pack(kb, request, writer):
     subjects = answer.get("subjects", [])
     if not isinstance(subjects, list):
         subjects = []
+    def verify(quote):
+        if not isinstance(quote, str) or not quote:
+            return None, []
+        norm = _normal(quote)
+        if len(norm) < 12:
+            dropped.append(DroppedQuote(quote, "too short"))
+            return None, []
+        matches = [(i, speaker, pos, _normal(text).find(norm))
+                   for i, h in enumerate(sources, 1)
+                   for pos, (speaker, text) in enumerate(_messages(h.chunk)) if norm in _normal(text)]
+        if matches:
+            indexes = list(dict.fromkeys(i for i, _, _, _ in matches))
+            i, speaker, _, _ = max(matches, key=lambda m: (sources[m[0] - 1].chunk.date, -m[0]))
+            return Decision(quote, indexes, speaker, sources[i - 1].chunk.date), matches
+        bodies = [h.chunk.text.partition("\n")[2] for h in sources]
+        if any(norm in _normal(body) for body in bodies):
+            reason = "spans two messages"
+        elif any(norm in _normal(h.chunk.text.partition("\n")[0]) for h in sources):
+            reason = "from the title line"
+        else:
+            reason = "not in any source"
+        dropped.append(DroppedQuote(quote, reason))
+        return None, []
+
+    groups = []
     for subject in subjects:
         if not isinstance(subject, dict):
             continue
         quotes = subject.get("quotes", [])
+        replacements = subject.get("replaces", [])
         if not isinstance(quotes, list):
+            quotes = []
+        if not isinstance(replacements, list):
+            replacements = []
+        verified = []
+        for index, quote in enumerate(quotes + replacements):
+            if index >= len(quotes) and any(d.quote == quote for d, _ in verified):
+                continue
+            decision, matches = verify(quote)
+            if decision:
+                verified.append((decision, matches))
+        if not verified:
             continue
-        for quote in quotes:
-            if not isinstance(quote, str):
-                continue
-            norm = _normal(quote)
-            if len(norm) < 12:
-                dropped.append(DroppedQuote(quote, "too short"))
-                continue
-            matches = [(i, speaker) for i, h in enumerate(sources, 1)
-                       for speaker, text in _messages(h.chunk) if norm in _normal(text)]
-            if matches:
-                indexes = list(dict.fromkeys(i for i, _ in matches))
-                i, speaker = max(matches, key=lambda match: (sources[match[0] - 1].chunk.date, -match[0]))
-                decisions.append(Decision(quote, indexes, speaker, sources[i - 1].chunk.date))
-            else:
-                bodies = [h.chunk.text.partition("\n")[2] for h in sources]
-                if any(norm in _normal(body) for body in bodies):
-                    reason = "spans two messages"
-                elif any(norm in _normal(h.chunk.text.partition("\n")[0]) for h in sources):
-                    reason = "from the title line"
-                else:
-                    reason = "not in any source"
-                dropped.append(DroppedQuote(quote, reason))
+        verified.sort(key=lambda pair: pair[0].date, reverse=True)
+        if replacements:
+            verified[0][0].replaced = [d for d, _ in verified[1:]]
+            displayed = verified[:1]
+        else:
+            displayed = verified
+        for decision, matches in displayed:
+            if decision.speaker != "You":
+                decision.suggested = True
+                acceptance, accepted_matches = verify(subject.get("accepted_by", ""))
+                if acceptance:
+                    lead = max(matches, key=lambda m: (sources[m[0] - 1].chunk.date, -m[0]))
+                    lead_chunk = sources[lead[0] - 1].chunk
+                    for i, speaker, pos, offset in accepted_matches:
+                        chunk = sources[i - 1].chunk
+                        if (speaker == "You" and (chunk.platform, chunk.chat_id) == (lead_chunk.platform, lead_chunk.chat_id)
+                                and (chunk.position, pos, offset) > (lead_chunk.position, lead[2], lead[3])):
+                            decision.acceptance = Decision(acceptance.quote, [i], "You", chunk.date)
+                            decision.suggested = False
+                            break
+            decisions.append(decision)
+        groups.append([d for d, _ in displayed])
     if not decisions:
         return result()
     numbered_quotes = "\n".join(f"[{i}] {d.quote}" for i, d in enumerate(decisions, 1))
@@ -185,9 +225,22 @@ def pack(kb, request, writer):
             number = item.get("quote")
             quote = decisions[number - 1].quote if type(number) is int and 1 <= number <= len(decisions) else None
             needs.append(Need(item["need"], quote is not None, quote))
+    def cite(d):
+        return f'"{d.quote}" ' + " ".join(f"[{i}]" for i in d.sources) + f" ({d.date[:10]})"
+
+    current = [group[0] for group in groups if group[0].replaced] or [groups[0][0]]
     lines = ["Context from my past chats (Memory for All):", f"**Request:** {request}", "",
-             "**Key decisions and facts:**"]
-    lines.extend(f'- **{d.speaker}:** "{d.quote}" ' + " ".join(f"[{i}]" for i in d.sources) + f" ({d.date[:10]})" for d in decisions)
+             "**In short:**"]
+    lines.extend(f"- {cite(d)}" for d in current)
+    lines.extend(["", "**Key decisions and facts:**"])
+    for d in decisions:
+        label = d.speaker + (" suggested" if d.suggested else "")
+        line = f"- **{label}:** {cite(d)}"
+        for old in d.replaced:
+            line += f". Changed from {cite(old)}"
+        if d.acceptance:
+            line += f". **You:** {cite(d.acceptance)}"
+        lines.append(line)
     lines.extend(["", "**Sources:**"])
     source_lines = [f"[{i}] {h.chunk.title} ({h.chunk.platform}, {h.chunk.date[:10]})\n{h.chunk.text}"
                     for i, h in enumerate(sources, 1)]
