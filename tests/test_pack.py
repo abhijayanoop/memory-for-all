@@ -172,3 +172,75 @@ def test_local_pack_end_to_end(tmp_path, record_property):
     record_property('pack_seconds', result.seconds)
     assert not result.nothing_found and result.text.startswith('Context from my past chats')
     assert all(any(d.quote.lower() in h.chunk.text.lower() for h in result.sources) for d in result.decisions)
+
+@pytest.mark.parametrize('api,key', [('openai', 'OPENAI_API_KEY'), ('claude', 'ANTHROPIC_API_KEY')])
+def test_hosted_pack_requires_key_before_work(tmp_path, fake, monkeypatch, capsys, api, key):
+    from memoryforall.cli import main
+    import json
+    cfg = tmp_path / 'config'
+    cfg.mkdir()
+    (cfg / 'settings.json').write_text(json.dumps({'pack_mode': 'hosted', 'pack_api': api}))
+    monkeypatch.setenv('MEMORYFORALL_CONFIG_DIR', str(cfg))
+    monkeypatch.delenv(key, raising=False)
+    writer = Writer({})
+    folder = tmp_path / 'kb'
+    assert main(['pack', 'guitar', '--kb', str(folder)], embedder=fake, writer=writer) == 2
+    assert f'Hosted pack-writing with {api} needs {key} in the environment.' in capsys.readouterr().err
+    assert writer.calls == 0 and not folder.exists()
+
+
+@pytest.mark.parametrize('api,key,response', [
+    ('openai', 'OPENAI_API_KEY', {'choices': [{'message': {'content': '{"subjects": []}'}}]}),
+    ('claude', 'ANTHROPIC_API_KEY', {'content': [{'type': 'text', 'text': '{"subjects": []}'}]}),
+])
+def test_hosted_writer_http_and_errors(monkeypatch, api, key, response):
+    import json
+    import urllib.error
+    from memoryforall.pack import HostedWriter, WritingModelError
+    calls = []
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self): return json.dumps(response).encode()
+    def send(req, **kwargs):
+        calls.append(req)
+        return Response()
+    monkeypatch.setenv(key, 'secret-value')
+    monkeypatch.setattr('urllib.request.urlopen', send)
+    writer = HostedWriter(api)
+    assert writer.ask('request and chunks') == {'subjects': []}
+    body = json.loads(calls[0].data)
+    assert body['temperature'] == 0 and body['messages'][0]['content'] == 'request and chunks'
+    assert 'secret-value' not in calls[0].data.decode()
+    def fail(*args, **kwargs):
+        raise urllib.error.HTTPError('url', 401, 'secret-value', {}, None)
+    monkeypatch.setattr('urllib.request.urlopen', fail)
+    with pytest.raises(WritingModelError) as exc:
+        writer.ask('request and chunks')
+    assert key in str(exc.value) and 'secret-value' not in str(exc.value)
+    monkeypatch.delenv(key)
+    with pytest.raises(WritingModelError, match=key):
+        writer.ask('request and chunks')
+
+@pytest.mark.parametrize('mode,api', [('local', 'openai'), ('hosted', 'openai'), ('hosted', 'claude')])
+def test_cli_selects_writer_from_settings(tmp_path, fake, monkeypatch, mode, api):
+    import json
+    from memoryforall.cli import main
+    from memoryforall import pack as packmod
+    cfg = tmp_path / 'config'
+    cfg.mkdir()
+    (cfg / 'settings.json').write_text(json.dumps({'pack_mode': mode, 'pack_api': api}))
+    monkeypatch.setenv('MEMORYFORALL_CONFIG_DIR', str(cfg))
+    monkeypatch.setenv('OPENAI_API_KEY', 'key')
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'key')
+    selected = []
+    def local():
+        selected.append('local')
+        return Writer({})
+    def hosted(name):
+        selected.append(name)
+        return Writer({})
+    monkeypatch.setattr(packmod, 'LocalWriter', local)
+    monkeypatch.setattr(packmod, 'HostedWriter', hosted)
+    assert main(['pack', 'guitar', '--kb', str(tmp_path / 'kb')], embedder=fake) == 0
+    assert selected == [api if mode == 'hosted' else 'local']
