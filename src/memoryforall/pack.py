@@ -43,6 +43,8 @@ class DroppedQuote:
 class Decision:
     quote: str
     sources: list[int]
+    speaker: str
+    date: str
 
 
 @dataclass
@@ -57,6 +59,15 @@ class PackResult:
 
 def _normal(text):
     return re.sub(r"\W+", " ", text.lower()).strip()
+
+
+def _messages(chunk):
+    body = chunk.text.partition("\n")[2]
+    if chunk.kind == "notes":
+        return [("You", body.removeprefix("My notes:\n"))]
+    parts = re.split(r"(?m)^(User|Assistant): ", body)
+    return [("You" if role == "User" else {"chatgpt": "ChatGPT", "claude": "Claude"}.get(chunk.platform.lower(), chunk.platform), text)
+            for role, text in zip(parts[1::2], parts[2::2])]
 
 
 def pack(kb, request, writer):
@@ -90,15 +101,28 @@ def pack(kb, request, writer):
             if not isinstance(quote, str):
                 continue
             norm = _normal(quote)
-            matches = [i for i, h in enumerate(sources, 1) if norm and norm in _normal(h.chunk.text)]
+            if len(norm) < 12:
+                dropped.append(DroppedQuote(quote, "too short"))
+                continue
+            matches = [(i, speaker) for i, h in enumerate(sources, 1)
+                       for speaker, text in _messages(h.chunk) if norm in _normal(text)]
             if matches:
-                decisions.append(Decision(quote, matches))
+                indexes = list(dict.fromkeys(i for i, _ in matches))
+                i, speaker = max(matches, key=lambda match: (sources[match[0] - 1].chunk.date, -match[0]))
+                decisions.append(Decision(quote, indexes, speaker, sources[i - 1].chunk.date))
             else:
-                dropped.append(DroppedQuote(quote, "not in any source"))
+                bodies = [h.chunk.text.partition("\n")[2] for h in sources]
+                if any(norm in _normal(body) for body in bodies):
+                    reason = "spans two messages"
+                elif any(norm in _normal(h.chunk.text.partition("\n")[0]) for h in sources):
+                    reason = "from the title line"
+                else:
+                    reason = "not in any source"
+                dropped.append(DroppedQuote(quote, reason))
     if not decisions:
         return result()
     lines = ["Context from my past chats (Memory for All):", f"**Request:** {request}", "",
              "**Key decisions and facts:**"]
-    lines.extend(f'- "{d.quote}" ' + " ".join(f"[{i}]" for i in d.sources) for d in decisions)
+    lines.extend(f'- **{d.speaker}:** "{d.quote}" ' + " ".join(f"[{i}]" for i in d.sources) + f" ({d.date[:10]})" for d in decisions)
     lines.extend(["", "**Sources:**", descriptions])
     return result("\n".join(lines))
