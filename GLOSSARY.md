@@ -33,7 +33,7 @@ What the user types to say which past context they want to carry into the curren
 _Avoid_: Query, search, project
 
 **Context Pack**:
-The block put into a new chat on any Platform for a Request: a short summary, a list of key decisions and facts, and the original Chunks that back them, each marked with its source.
+The block put into a new chat on any Platform for a Request: Current Decisions as exact quotes, key decisions and facts as exact quotes, and the original Chunks that back them, each marked with its source.
 _Avoid_: Prompt, memory dump, summary
 
 **Match Score**:
