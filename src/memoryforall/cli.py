@@ -65,12 +65,13 @@ def set_mode(sf: Path, s: dict, which: str, value: str, api: str | None) -> int:
     return 0
 
 
-def main(argv=None, embedder=None, embedders=EMBEDDERS) -> int:
+def main(argv=None, embedder=None, embedders=EMBEDDERS, writer=None) -> int:
     p = argparse.ArgumentParser(prog="memoryforall")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("import").add_argument("folder")
     sub.add_parser("reindex")
     sub.add_parser("status")
+    sub.add_parser("pack").add_argument("request")
     search_p = sub.add_parser("search")
     search_p.add_argument("request")
     search_p.add_argument("-k", type=int, default=5)
@@ -113,7 +114,7 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS) -> int:
         return 2
     Path(kb_path).mkdir(parents=True, exist_ok=True)
     kb = KnowledgeBase(kb_path, embedder or embedders[SEARCH_EMBEDDER[s["search_mode"]]](), embedders)
-    if a.cmd in ("search", "status"):  # not for reindex: it must still recover a damaged index file
+    if a.cmd in ("search", "status", "pack"):  # not for reindex: it must still recover a damaged index file
         live, pending = kb.index_embedder(), kb.reembed_pending()
     if a.cmd == "import":
         counts = Counter()
@@ -131,6 +132,27 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS) -> int:
             print(f"reindex failed, old index kept: {e}", file=sys.stderr)
             return 1
         print(", ".join(f"{k}: {n[k]}" for k in ("added", "changed", "removed", "skipped", "chunks")))
+    elif a.cmd == "pack":
+        from .pack import LocalWriter, WritingModelError, pack
+        try:
+            result = pack(kb, a.request, writer or LocalWriter())
+        except ValueError as e:
+            print(e, file=sys.stderr)
+            return 2
+        except WritingModelError as e:
+            print(e, file=sys.stderr)
+            return 1
+        if pending:
+            print(f"note: re-embed pending; searching the index built with {live} until the next reindex", file=sys.stderr)
+        print(f"Pack took {result.seconds:.2f} seconds", file=sys.stderr)
+        for d in result.dropped:
+            print(f"Dropped: {d.quote} ({d.reason})", file=sys.stderr)
+        if result.nothing_found:
+            if not kb.chunks():
+                print("The index is empty or missing. Run: memoryforall reindex", file=sys.stderr)
+            print("Nothing found in your chats for this")
+        else:
+            print(result.text)
     elif a.cmd == "search":
         try:
             hits = kb.search(a.request, a.k)
