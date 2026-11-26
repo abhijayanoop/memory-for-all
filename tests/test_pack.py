@@ -14,7 +14,7 @@ def test_quote_rules_and_speaker(tmp_path, fake):
                                    'speaker': 'user'}]})
     result = pack(kb, 'guitar', writer)
     assert '**You:** "I prefer a wooden guitar" [1] (2025-01-01)' in result.text
-    assert '**ChatGPT:** "Choose a bright amplifier" [1] (2025-01-01)' in result.text
+    assert '**ChatGPT suggested:** "Choose a bright amplifier" [1] (2025-01-01)' in result.text
     assert [d.reason for d in result.dropped] == ['too short', 'spans two messages', 'from the title line']
 
 
@@ -28,7 +28,7 @@ def test_matching_sources_choose_newest_and_ranked_speaker(tmp_path, fake):
     second = replace(hit.chunk, text='Chat: second\nAssistant: ' + text, platform='chatgpt', date='2025-02-01')
     kb.search = lambda *args, **kwargs: [SimpleNamespace(chunk=c, score=1) for c in (first, second)]
     result = pack(kb, 'guitar', Writer({'subjects': [{'quotes': [text]}]}))
-    assert '**ChatGPT:** "' + text + '" [1] [2] (2025-02-01)' in result.text
+    assert '**ChatGPT suggested:** "' + text + '" [1] [2] (2025-02-01)' in result.text
     second.date = first.date
     result = pack(kb, 'guitar', Writer({'subjects': [{'quotes': [text]}]}))
     assert '**You:** "' + text + '" [1] [2] (2025-01-01)' in result.text
@@ -244,3 +244,41 @@ def test_cli_selects_writer_from_settings(tmp_path, fake, monkeypatch, mode, api
     monkeypatch.setattr(packmod, 'HostedWriter', hosted)
     assert main(['pack', 'guitar', '--kb', str(tmp_path / 'kb')], embedder=fake) == 0
     assert selected == [api if mode == 'hosted' else 'local']
+
+
+def test_current_decision_and_plain_facts(tmp_path, fake):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    kb = make(tmp_path, fake, [conv('a', 'base text for guitar')])
+    chunk = kb.search('guitar')[0].chunk
+    old = replace(chunk, date='2025-01-01', text='Chat: title\nUser: I chose the old guitar model')
+    new = replace(chunk, date='2025-03-01', text='Chat: title\nUser: I chose the new guitar model')
+    kb.search = lambda *a, **kw: [SimpleNamespace(chunk=c, score=1) for c in (old, new)]
+    result = pack(kb, 'guitar', Writer({'subjects': [{'quotes': ['I chose the old guitar model', 'I chose the new guitar model'], 'replaces': ['I chose the old guitar model']}]}))
+    short, rest = result.text.split('**Key decisions and facts:**')
+    assert 'I chose the new guitar model' in short
+    assert 'I chose the new guitar model' in rest.split('Changed from')[0]
+    assert 'Changed from "I chose the old guitar model" [1] (2025-01-01)' in rest
+    result = pack(kb, 'guitar', Writer({'subjects': [{'quotes': ['I chose the old guitar model', 'I chose the new guitar model']}]}))
+    assert 'Changed from' not in result.text
+
+
+def test_suggestion_acceptance_requires_later_same_conversation(tmp_path, fake):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    kb = make(tmp_path, fake, [conv('a', 'base text for guitar')])
+    chunk = kb.search('guitar')[0].chunk
+    suggestion = replace(chunk, platform='chatgpt', position=1, text='Chat: title\nAssistant: You should choose the blue guitar')
+    acceptance = replace(chunk, platform='chatgpt', position=2, text='Chat: title\nUser: I agree with the blue guitar')
+    sources = [suggestion, acceptance]
+    kb.search = lambda *a, **kw: [SimpleNamespace(chunk=c, score=1) for c in sources]
+    subject = {'quotes': ['You should choose the blue guitar'], 'accepted_by': 'I agree with the blue guitar'}
+    result = pack(kb, 'guitar', Writer({'subjects': [subject]}))
+    assert '**ChatGPT:** "You should choose the blue guitar"' in result.text
+    assert '**You:** "I agree with the blue guitar"' in result.text
+    for invalid in (replace(acceptance, chat_id='other'), replace(acceptance, position=0),
+                    replace(acceptance, position=1, text='Chat: title\nUser: I agree with the blue guitar\nAssistant: You should choose the blue guitar')):
+        sources[1] = invalid
+        result = pack(kb, 'guitar', Writer({'subjects': [subject]}))
+        assert '**ChatGPT suggested:** "You should choose the blue guitar"' in result.text
+        assert '**You:** "I agree with the blue guitar"' not in result.text
