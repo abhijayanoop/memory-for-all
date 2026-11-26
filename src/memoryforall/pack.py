@@ -7,6 +7,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 
+PACK_LIMIT = 9500
 from .embed import KEYS
 
 OPENAI_MODEL = "gpt-4o-mini"
@@ -96,6 +97,7 @@ class PackResult:
     decisions: list
     dropped: list
     seconds: float
+    over_limit: bool
 
 
 def _normal(text):
@@ -117,7 +119,8 @@ def pack(kb, request, writer):
     decisions, dropped = [], []
 
     def result(text=None):
-        return PackResult(text, text is None, sources, decisions, dropped, time.monotonic() - started)
+        return PackResult(text, text is None, sources, decisions, dropped, time.monotonic() - started,
+                          text is not None and len(text) > PACK_LIMIT)
 
     if not sources:
         return result()
@@ -167,8 +170,8 @@ def pack(kb, request, writer):
         if not isinstance(replacements, list):
             replacements = []
         verified = []
-        for quote in quotes + replacements:
-            if any(d.quote == quote for d, _ in verified):
+        for index, quote in enumerate(quotes + replacements):
+            if index >= len(quotes) and any(d.quote == quote for d, _ in verified):
                 continue
             decision, matches = verify(quote)
             if decision:
@@ -215,5 +218,14 @@ def pack(kb, request, writer):
         if d.acceptance:
             line += f". **You:** {cite(d.acceptance)}"
         lines.append(line)
-    lines.extend(["", "**Sources:**", descriptions])
-    return result("\n".join(lines))
+    lines.extend(["", "**Sources:**"])
+    source_lines = [f"[{i}] {h.chunk.title} ({h.chunk.platform}, {h.chunk.date[:10]})\n{h.chunk.text}"
+                    for i, h in enumerate(sources, 1)]
+    text = "\n".join(lines + ["\n\n".join(source_lines)])
+    for i in range(len(source_lines) - 1, -1, -1):
+        if len(text) <= PACK_LIMIT:
+            break
+        h = sources[i]
+        source_lines[i] = f"[{i + 1}] {h.chunk.title} ({h.chunk.platform}, {h.chunk.date[:10]}) (text left out for length)"
+        text = "\n".join(lines + ["\n\n".join(source_lines)])
+    return result(text)
