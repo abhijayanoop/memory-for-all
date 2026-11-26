@@ -55,3 +55,11 @@ _Avoid_: Provider, vendor
 **Test Set**:
 A fixed list of questions from the user's real Conversations, each with the right Chunks marked, used to measure quality after every change. It includes questions whose answer is not in the Knowledge Base.
 _Avoid_: Benchmark, eval data
+
+**Hallucination**:
+A Context Pack saying something the user's Conversations do not: a wrong fact, a wrong link between true facts (for example swapping which product is the guitar and which is the amp), or an assistant's suggestion shown as the user's decision. The target is zero.
+_Avoid_: Error, inaccuracy
+
+**Abstention**:
+Saying "nothing found", or naming a need as missing, instead of answering. A correct Abstention is one where the answer really is not in the Knowledge Base. A wrong Abstention is one where the answer is there but the pack leaves it out or the Match Score marks it missing. Kept apart from Hallucination because the two fail in opposite directions.
+_Avoid_: Refusal, miss
