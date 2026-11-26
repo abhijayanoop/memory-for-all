@@ -1,5 +1,6 @@
 """Build a Context Pack from quotes selected by a writing model."""
 import json
+import os
 import re
 import time
 import urllib.error
@@ -7,6 +8,10 @@ import urllib.request
 from dataclasses import dataclass
 
 PACK_LIMIT = 9500
+from .embed import KEYS
+
+OPENAI_MODEL = "gpt-4o-mini"
+CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 LOCAL_MODEL = "qwen3:4b-instruct"
 NOT_FOUND_FLOOR = 0.0  # untuned; spec 4 will calibrate against the Test Set
 
@@ -32,6 +37,39 @@ class LocalWriter:
             return result
         except (OSError, ValueError, KeyError, TypeError) as e:
             raise WritingModelError(f"Local writing model failed. Start Ollama, then run: ollama pull {LOCAL_MODEL}") from e
+
+
+class HostedWriter:
+    def __init__(self, api):
+        self.api = api
+        self.name = OPENAI_MODEL if api == "openai" else CLAUDE_MODEL
+
+    def ask(self, prompt):
+        key_name = KEYS[self.api]
+        key = os.environ.get(key_name)
+        if not key:
+            raise WritingModelError(f"Hosted pack-writing with {self.api} needs {key_name} in the environment.")
+        payload = {"model": self.name, "temperature": 0, "messages": [{"role": "user", "content": prompt}]}
+        headers = {"Content-Type": "application/json"}
+        if self.api == "openai":
+            url = "https://api.openai.com/v1/chat/completions"
+            headers["Authorization"] = f"Bearer {key}"
+            payload["response_format"] = {"type": "json_object"}
+        else:
+            url = "https://api.anthropic.com/v1/messages"
+            headers.update({"x-api-key": key, "anthropic-version": "2023-06-01"})
+            payload["max_tokens"] = 4096
+        req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=120) as response:
+                data = json.loads(response.read())
+            answer = data["choices"][0]["message"]["content"] if self.api == "openai" else data["content"][0]["text"]
+            result = json.loads(answer)
+            if not isinstance(result, dict):
+                raise ValueError("expected an object")
+            return result
+        except (OSError, ValueError, KeyError, TypeError, IndexError):
+            raise WritingModelError(f"Hosted pack-writing with {self.api} failed; check {key_name}, API access and billing, then try again.") from None
 
 
 @dataclass

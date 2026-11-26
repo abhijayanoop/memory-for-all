@@ -107,6 +107,10 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS, writer=None) -> int:
             p.error("usage: mode [search local|hosted | pack local|hosted [--api openai|claude]]")
         print(modes_text(s))
         return 0
+    if a.cmd == "pack" and s["pack_mode"] == "hosted" and not os.environ.get(KEYS[s["pack_api"]]):
+        api = s["pack_api"]
+        print(f"Hosted pack-writing with {api} needs {KEYS[api]} in the environment.", file=sys.stderr)
+        return 2
     kb_path = a.kb or s.get("kb")
     if not kb_path:
         print("No Knowledge Base folder set. Run: memoryforall set-kb <folder> "
@@ -133,9 +137,9 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS, writer=None) -> int:
             return 1
         print(", ".join(f"{k}: {n[k]}" for k in ("added", "changed", "removed", "skipped", "chunks")))
     elif a.cmd == "pack":
-        from .pack import LocalWriter, WritingModelError, pack
+        from .pack import HostedWriter, LocalWriter, WritingModelError, pack
         try:
-            result = pack(kb, a.request, writer or LocalWriter())
+            result = pack(kb, a.request, writer or (HostedWriter(s["pack_api"]) if s["pack_mode"] == "hosted" else LocalWriter()))
         except ValueError as e:
             print(e, file=sys.stderr)
             return 2
