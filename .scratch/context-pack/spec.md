@@ -141,7 +141,7 @@ The pack contains no model-written prose, so it can only say what my chats say. 
 - **Quote verification (program):**
   - Normalise by lower-casing and turning every run of non-word characters into one space. A quote is verified if its normalised form is in a source's normalised text.
   - A quote under 12 normalised characters is rejected as too short.
-  - The program finds every source holding the quote and cites all of them; the first one (best rank) decides the speaker and date.
+  - The program finds every source holding the quote and cites all of them; the newest matching source decides the speaker and date; ties use the best-ranked source.
   - Speaker: the Chunk text is split into messages at lines starting `User: ` / `Assistant: ` (spec 1's Chunk text format). The quote must lie inside one message. `User:` and notes Chunks → **You**; `Assistant:` → the Chunk's Platform (**ChatGPT** or **Claude**). A quote found only in the `Chat:` title line is rejected.
   - A subject with no verified quote is dropped. If no subject survives, the result is `nothing_found`.
 - **Current Decision (program):** within a subject, the verified `quotes` and `replaces` are ordered by their source Chunk's date. The newest leads. Every older quote that the model listed under `replaces`, or that the program moved down because it was older, is shown as replaced, with its date. Ties keep the model's order. A subject with no `replaces` is a list of facts with no "replaced" note.
@@ -183,10 +183,10 @@ The pack contains no model-written prose, so it can only say what my chats say. 
 
 - A good test calls `pack` (or the command line) and checks what the user or a later spec sees: the pack text, `nothing_found`, needs coverage, dropped quotes and their reasons, exit codes and printed output. It does not check prompt wording, normalisation helpers or rendering internals. A refactor that keeps behaviour must not break tests.
 - **The one seam, `pack(kb, request, writer)`:** a temporary Knowledge Base built from fixture Conversations, with spec 2's fake embedder and fake re-ranker, and a **scripted fake writer** that returns canned JSON per call (and records how many calls it got). Cases:
-  - a quote present in a source appears in the pack with the right [n], speaker and date; a quote the fake invents is dropped with reason "not in any source" and never appears;
+  - a quote present in a source appears in the pack with the right [n], speaker and date; a quote in multiple sources cites all of them and uses the newest matching source for its speaker and date (best rank breaks date ties); a quote the fake invents is dropped with reason "not in any source" and never appears;
   - a quote differing only in case and punctuation is accepted;
   - a too-short quote, a quote spanning a `User:` and an `Assistant:` line, and a quote only in the `Chat:` title line are each dropped with their reason;
-  - a quote in two sources cites both; the speaker comes from the best-ranked one;
+  - a quote in two sources cites both; the speaker comes from the newest matching source, with rank breaking date ties;
   - the fake claiming a wrong source or speaker makes no difference: the program's own finding wins;
   - Current Decision: with an older and a newer Chunk on one subject, the newer quote leads and the older is noted as replaced with its date, even when the fake lists them the other way round; it also appears under In short;
   - a subject with several facts and no `replaces` has no "changed from" note;

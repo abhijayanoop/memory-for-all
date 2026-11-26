@@ -7,6 +7,6 @@
 **Status:** ready-for-agent
 
 - [ ] `measure` times spec 3's `pack` over the bench Requests when a writer is given: median and worst, each split into search and writing time
-- [ ] The pack budget (under 30 s) gets a verdict at 100,000 Conversations, `report only` below
+- [ ] The pack budget (under 30 s) gets a verdict at 100,000 Conversations, `report only` at other sizes
 - [ ] `bench run` builds the writer as the `pack` command does; when the local writing model is unreachable it skips pack timing with a note and does not fail
 - [ ] Tests with spec 3's scripted fake writer and a scripted clock: pack times and split are reported; a 40 s pack at the threshold gives `fail`; no writer → skipped with a note

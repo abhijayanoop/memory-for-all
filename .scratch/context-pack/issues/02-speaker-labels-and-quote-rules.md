@@ -10,7 +10,7 @@
 - [ ] `User:` lines and notes Chunks give **You**; `Assistant:` gives the Chunk's Platform (**ChatGPT** / **Claude**)
 - [ ] A quote found only in the `Chat:` title line is dropped with reason "from the title line"
 - [ ] A quote under 12 normalised characters is dropped with reason "too short"
-- [ ] A quote held by several sources cites every one; the best-ranked source decides the speaker and date
+- [ ] A quote held by several sources cites every one; the newest matching source decides the speaker and date; best rank breaks date ties
 - [ ] Each rendered quote carries its speaker label and date
 - [ ] CLI prints dropped quotes with their reasons on stderr
-- [ ] Tests at the `pack` seam: each drop reason; multi-source citation; notes labelled You; a wrong speaker implied by the fake makes no difference
+- [ ] Tests at the `pack` seam: each drop reason; multi-source citation and newest-source speaker and date, including a date tie; notes labelled You; a wrong speaker implied by the fake makes no difference

@@ -10,3 +10,5 @@
 - [ ] The vector matrix is swapped only after the refresh commits
 - [ ] Existing tests pass unchanged
 - [ ] New test: with a refresh blocked inside the embedder on another thread, a search returns the old index's results; after the refresh finishes, a search sees the new Chunks
+
+- [ ] After this fix, run the existing test suite and have the user run `quality score` on a fresh run of the real Test Set and `bench run` at 100,000 Conversations; record the results in Comments. Keep the fix only if all five quality checks pass; otherwise adjust or revert it

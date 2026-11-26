@@ -56,7 +56,7 @@ Budgets (settled 2026-11-22), on my laptop, fully local Mode, at 100,000 Convers
 15. As a user, I want the full rebuild reported as Conversations per minute and an estimated total, so that I know how long a model switch will take without always waiting hours.
 16. As a user, I want the Context Pack timed with the real local writing model when it is reachable, and skipped with a note when it is not, so that a missing model doesn't fail the whole bench.
 17. As a user, I want the index size on disk reported, split into its parts, so that I know what the Knowledge Base costs in disk space.
-18. As a user, I want each result marked pass or fail against its budget when the Knowledge Base has at least 100,000 Conversations, and only reported for smaller sizes, so that the budgets apply where they were agreed.
+18. As a user, I want each result marked pass or fail against its budget when the Knowledge Base has exactly 100,000 Conversations, and only reported at other sizes, so that the budgets apply where they were agreed.
 19. As a user, I want the bench to exit non-zero when a budget fails at 100,000 Conversations, so that it can be used as a gate like `quality score`.
 20. As a user, I want every bench run appended to a results file next to the generated Knowledge Base with the date, the code version, the Conversation and Chunk counts and the settings used, so that I can compare runs before and after each change.
 21. As a user, I want the bench to print what it is doing and how far along it is, so that a long run doesn't look frozen.
@@ -130,7 +130,7 @@ Budgets (settled 2026-11-22), on my laptop, fully local Mode, at 100,000 Convers
   - recall, when an approximate search is active: the share of exact search's top `MEANING_TOP` that the approximate search also returns, over the bench Requests.
   The clock is injectable so verdicts can be tested.
 - Requests default to a seeded sample of 20 user messages (first line, cut to a Request-like length) from the measured Knowledge Base. A Requests file (one per line) may be passed instead.
-- `Report` holds every timing, the Conversation and Chunk counts, the settings (search Mode, embedder, re-ranker, `RERANK_TOP`, `MEANING_TOP`, `KEYWORD_TOP`, approximate search on or off) and a verdict per budget: `pass`, `fail`, or `report only` below 100,000 Conversations.
+- `Report` holds every timing, the Conversation and Chunk counts, the settings (search Mode, embedder, re-ranker, `RERANK_TOP`, `MEANING_TOP`, `KEYWORD_TOP`, approximate search on or off) and a verdict per budget: `pass` or `fail` at 100,000 Conversations, and `report only` at other sizes.
 
 ### Command line
 
@@ -176,7 +176,7 @@ Budgets (settled 2026-11-22), on my laptop, fully local Mode, at 100,000 Convers
   - saving into a Knowledge Base with many fixture files finds and replaces the existing file (renamed title included), and `status` counts match the files.
 - **Bench seam:**
   - `generate` from a small fixture Knowledge Base: the requested count is saved, every file parses, chat ids are distinct from the source and from each other, dates spread across months, text differs from the source, the same seed gives identical output, a second run adds rather than overwrites, and a destination inside the source folder or inside a folder with `.git` is refused;
-  - `measure` with fakes and a scripted clock: the report holds every timing and count; budgets give `report only` below 100,000 Conversations; with the Conversation count faked at the threshold, a clock that makes search take 3 s gives `fail`, 1 s gives `pass`; pack is skipped with a note when no writer is given;
+  - `measure` with fakes and a scripted clock: the report holds every timing and count; budgets give `report only` below and above 100,000 Conversations; with the Conversation count faked at the threshold, a clock that makes search take 3 s gives `fail`, 1 s gives `pass`; pack is skipped with a note when no writer is given;
   - recall is computed correctly when the approximate search returns a known subset (only once an approximate search exists).
 - **Command line smoke tests** (config directory pointed at a temporary folder, fakes injected, as in `tests/test_modes.py`): `bench generate` makes the files and prints counts; `bench run` prints the report, appends one line to the results file and exits non-zero when a budget fails.
 - **Not in the test suite:** runs at 10,000 and above, the real local models' timings, and the real Test Set. Those are run by hand with `bench run` and `quality score`, and their results are kept in the results file outside the repo. No test calls OpenAI or Claude.

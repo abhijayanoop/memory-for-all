@@ -13,3 +13,5 @@
 - [ ] Progress (done of total, Conversations per minute, estimated time left) printed to standard error
 - [ ] Existing tests pass unchanged (safe swap, model switch)
 - [ ] New tests with a counting embedder that fails after N Conversations: the live index stays searchable; the next rebuild with a working embedder completes and makes fewer embed calls than a fresh one; a side index from another embedder is discarded
+
+- [ ] After this fix, run the existing test suite and have the user run `quality score` on a fresh run of the real Test Set and `bench run` at 100,000 Conversations; record the results in Comments. Keep the fix only if all five quality checks pass; otherwise adjust or revert it
