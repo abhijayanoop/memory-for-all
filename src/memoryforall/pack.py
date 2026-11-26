@@ -84,11 +84,19 @@ class Decision:
 
 
 @dataclass
+class Need:
+    need: str
+    covered: bool
+    quote: str | None
+
+
+@dataclass
 class PackResult:
     text: str | None
     nothing_found: bool
     sources: list
     decisions: list
+    needs: list
     dropped: list
     seconds: float
 
@@ -100,10 +108,10 @@ def _normal(text):
 def pack(kb, request, writer):
     started = time.monotonic()
     sources = [h for h in kb.search(request, k=8) if h.score >= NOT_FOUND_FLOOR]
-    decisions, dropped = [], []
+    decisions, needs, dropped = [], [], []
 
     def result(text=None):
-        return PackResult(text, text is None, sources, decisions, dropped, time.monotonic() - started)
+        return PackResult(text, text is None, sources, decisions, needs, dropped, time.monotonic() - started)
 
     if not sources:
         return result()
@@ -135,6 +143,21 @@ def pack(kb, request, writer):
                 dropped.append(DroppedQuote(quote, "not in any source"))
     if not decisions:
         return result()
+    numbered_quotes = "\n".join(f"[{i}] {d.quote}" for i, d in enumerate(decisions, 1))
+    answer = writer.ask("Split the Request alone into 1 to 4 short needs. For each need, identify which "
+                        "numbered verified quote covers it, or null if none does. Return JSON object with "
+                        "needs, each containing need and quote (a number or null).\nRequest: " + request +
+                        "\nVerified quotes:\n" + numbered_quotes)
+    if not isinstance(answer, dict):
+        raise WritingModelError("Writing model returned invalid JSON; check the model and try again.")
+    items = answer.get("needs", [])
+    if isinstance(items, list):
+        for item in items[:4]:
+            if not isinstance(item, dict) or not isinstance(item.get("need"), str):
+                continue
+            number = item.get("quote")
+            quote = decisions[number - 1].quote if type(number) is int and 1 <= number <= len(decisions) else None
+            needs.append(Need(item["need"], quote is not None, quote))
     lines = ["Context from my past chats (Memory for All):", f"**Request:** {request}", "",
              "**Key decisions and facts:**"]
     lines.extend(f'- "{d.quote}" ' + " ".join(f"[{i}]" for i in d.sources) for d in decisions)

@@ -18,7 +18,7 @@ def test_verified_quote_and_invention(tmp_path, fake):
     assert 'I CHOSE the blue guitar, for recording!' in result.text
     assert '[1]' in result.text and 'invented words here' not in result.text
     assert result.dropped[0].reason == 'not in any source'
-    assert writer.calls == 1
+    assert writer.calls == 2
 
 
 def test_cli_pack_outputs_pack_and_time(tmp_path, fake, capsys, monkeypatch):
@@ -198,3 +198,39 @@ def test_cli_selects_writer_from_settings(tmp_path, fake, monkeypatch, mode, api
     monkeypatch.setattr(packmod, 'HostedWriter', hosted)
     assert main(['pack', 'guitar', '--kb', str(tmp_path / 'kb')], embedder=fake) == 0
     assert selected == [api if mode == 'hosted' else 'local']
+
+
+def test_needs_use_only_verified_quotes(tmp_path, fake):
+    kb = make(tmp_path, fake, [conv('a', 'I chose the blue guitar for recording')])
+    class ScriptedWriter:
+        def __init__(self): self.calls = 0
+        def ask(self, prompt):
+            self.calls += 1
+            if self.calls == 1:
+                return {'subjects': [{'quotes': ['I chose the blue guitar for recording', 'invented words here']}]}
+            return {'needs': [{'need': 'guitar choice', 'quote': 1},
+                              {'need': 'amplifier choice', 'quote': 2}, {'need': 'price', 'quote': 99}]}
+    writer = ScriptedWriter()
+    result = pack(kb, 'guitar and amplifier and price', writer)
+    assert writer.calls == 2
+    assert [(n.need, n.covered, n.quote) for n in result.needs] == [
+        ('guitar choice', True, 'I chose the blue guitar for recording'),
+        ('amplifier choice', False, None), ('price', False, None)]
+    assert 'amplifier choice' not in result.text and 'Match Score' not in result.text
+
+
+def test_cli_prints_needs_on_stderr(tmp_path, fake, capsys, monkeypatch):
+    from memoryforall.cli import main
+    monkeypatch.setenv('MEMORYFORALL_CONFIG_DIR', str(tmp_path / 'config'))
+    kb = make(tmp_path / 'kb', fake, [conv('a', 'I chose the blue guitar for recording')])
+    class ScriptedWriter:
+        def __init__(self): self.calls = 0
+        def ask(self, prompt):
+            self.calls += 1
+            return ({'subjects': [{'quotes': ['I chose the blue guitar for recording']}]} if self.calls == 1
+                    else {'needs': [{'need': 'guitar choice', 'quote': 1}, {'need': 'price', 'quote': None}]})
+    assert main(['pack', 'guitar', '--kb', str(kb.folder)], embedder=fake, writer=ScriptedWriter()) == 0
+    output = capsys.readouterr()
+    assert 'guitar choice' not in output.out and 'price' not in output.out
+    assert 'guitar choice' in output.err and 'covered' in output.err
+    assert 'price' in output.err and 'missing' in output.err
