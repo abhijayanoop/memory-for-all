@@ -352,3 +352,30 @@ def test_suggestion_acceptance_requires_later_same_conversation(tmp_path, fake):
         result = pack(kb, 'guitar', Writer({'subjects': [subject]}))
         assert '**ChatGPT suggested:** "You should choose the blue guitar"' in result.text
         assert '**You:** "I agree with the blue guitar"' not in result.text
+
+def test_review_quote_regressions(tmp_path, fake):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    kb = make(tmp_path, fake, [conv('a', 'base text for guitar')])
+    chunk = kb.search('guitar')[0].chunk
+    chunk = replace(chunk, platform='chatgpt', text='Chat: title\nUser: I chose the old guitar model\nAssistant: You should choose the blue guitar\nUser: I agree with the blue guitar and browsed the catalogue today')
+    kb.search = lambda *a, **kw: [SimpleNamespace(chunk=chunk, score=1)]
+    class Scripted:
+        def __init__(self, subject): self.subject, self.calls = subject, 0
+        def ask(self, prompt):
+            self.calls += 1
+            if self.calls == 1: return {'subjects': [self.subject]}
+            assert '[2] I chose the old guitar model' in prompt
+            assert '[3] I agree with the blue guitar' in prompt
+            return {'needs': [{'need': 'old', 'quote': 2}, {'need': 'agreement', 'quote': 3}]}
+    subject = {'quotes': ['You should choose the blue guitar'], 'replaces': ['I chose the old guitar model'], 'accepted_by': 'I agree with the blue guitar'}
+    result = pack(kb, 'guitar', Scripted(subject))
+    short = result.text.split('**Key decisions')[0]
+    assert '**ChatGPT:**' in short and '**You:** "I agree with the blue guitar"' in short
+    assert [n.quote for n in result.needs] == ['I chose the old guitar model', 'I agree with the blue guitar']
+    result = pack(kb, 'guitar', Writer({'subjects': [{'quotes': ['You should choose the blue guitar']}]}))
+    assert '**ChatGPT suggested:**' in result.text.split('**Key decisions')[0]
+    result = pack(kb, 'guitar', Writer({'subjects': [{'quotes': ['I chose the old guitar model', 'I agree with the blue guitar'], 'replaces': ['invented old choice']}]}))
+    assert 'Changed from' not in result.text and len(result.decisions) == 2
+    result = pack(kb, 'guitar', Writer({'subjects': [{'quotes': ['browsed the cat']}]}))
+    assert result.nothing_found

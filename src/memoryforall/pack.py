@@ -112,6 +112,10 @@ def _normal(text):
     return re.sub(r"\W+", " ", text.lower()).strip()
 
 
+def _find(text, quote):
+    return (" " + _normal(text) + " ").find(" " + quote + " ")
+
+
 def _messages(chunk):
     body = chunk.text.partition("\n")[2]
     if chunk.kind == "notes":
@@ -150,17 +154,17 @@ def pack(kb, request, writer):
         if len(norm) < 12:
             dropped.append(DroppedQuote(quote, "too short"))
             return None, []
-        matches = [(i, speaker, pos, _normal(text).find(norm))
+        matches = [(i, speaker, pos, _find(text, norm))
                    for i, h in enumerate(sources, 1)
-                   for pos, (speaker, text) in enumerate(_messages(h.chunk)) if norm in _normal(text)]
+                   for pos, (speaker, text) in enumerate(_messages(h.chunk)) if _find(text, norm) >= 0]
         if matches:
             indexes = list(dict.fromkeys(i for i, _, _, _ in matches))
             i, speaker, _, _ = max(matches, key=lambda m: (sources[m[0] - 1].chunk.date, -m[0]))
             return Decision(quote, indexes, speaker, sources[i - 1].chunk.date), matches
         bodies = [h.chunk.text.partition("\n")[2] for h in sources]
-        if any(norm in _normal(body) for body in bodies):
+        if any(_find(body, norm) >= 0 for body in bodies):
             reason = "spans two messages"
-        elif any(norm in _normal(h.chunk.text.partition("\n")[0]) for h in sources):
+        elif any(_find(h.chunk.text.partition("\n")[0], norm) >= 0 for h in sources):
             reason = "from the title line"
         else:
             reason = "not in any source"
@@ -178,16 +182,19 @@ def pack(kb, request, writer):
         if not isinstance(replacements, list):
             replacements = []
         verified = []
+        valid_replacement = False
         for index, quote in enumerate(quotes + replacements):
             if index >= len(quotes) and any(d.quote == quote for d, _ in verified):
+                valid_replacement = True
                 continue
             decision, matches = verify(quote)
             if decision:
                 verified.append((decision, matches))
+                valid_replacement |= index >= len(quotes)
         if not verified:
             continue
         verified.sort(key=lambda pair: pair[0].date, reverse=True)
-        if replacements:
+        if valid_replacement:
             verified[0][0].replaced = [d for d, _ in verified[1:]]
             displayed = verified[:1]
         else:
@@ -210,7 +217,8 @@ def pack(kb, request, writer):
         groups.append([d for d, _ in displayed])
     if not decisions:
         return result()
-    numbered_quotes = "\n".join(f"[{i}] {d.quote}" for i, d in enumerate(decisions, 1))
+    evidence = [q for d in decisions for q in [d, *d.replaced, *([d.acceptance] if d.acceptance else [])]]
+    numbered_quotes = "\n".join(f"[{i}] {d.quote}" for i, d in enumerate(evidence, 1))
     answer = writer.ask("Split the Request alone into 1 to 4 short needs. For each need, identify which "
                         "numbered verified quote covers it, or null if none does. Return JSON object with "
                         "needs, each containing need and quote (a number or null).\nRequest: " + request +
@@ -223,7 +231,7 @@ def pack(kb, request, writer):
             if not isinstance(item, dict) or not isinstance(item.get("need"), str):
                 continue
             number = item.get("quote")
-            quote = decisions[number - 1].quote if type(number) is int and 1 <= number <= len(decisions) else None
+            quote = evidence[number - 1].quote if type(number) is int and 1 <= number <= len(evidence) else None
             needs.append(Need(item["need"], quote is not None, quote))
     def cite(d):
         return f'"{d.quote}" ' + " ".join(f"[{i}]" for i in d.sources) + f" ({d.date[:10]})"
@@ -231,7 +239,14 @@ def pack(kb, request, writer):
     current = [group[0] for group in groups if group[0].replaced] or [groups[0][0]]
     lines = ["Context from my past chats (Memory for All):", f"**Request:** {request}", "",
              "**In short:**"]
-    lines.extend(f"- {cite(d)}" for d in current)
+    def labelled(d):
+        label = d.speaker + (" suggested" if d.suggested else "")
+        line = f"**{label}:** {cite(d)}"
+        if d.acceptance:
+            line += f". **You:** {cite(d.acceptance)}"
+        return line
+
+    lines.extend(f"- {labelled(d)}" for d in current)
     lines.extend(["", "**Key decisions and facts:**"])
     for d in decisions:
         label = d.speaker + (" suggested" if d.suggested else "")
