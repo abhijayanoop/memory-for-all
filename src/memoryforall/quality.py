@@ -131,7 +131,7 @@ def run(kb, test_set, writer):
             result = pack(kb, q['question'], writer)
             rows.append({'question': q, 'finding': finding, 'nothing_found': result.nothing_found,
                          'pack': result.text, 'error': None,
-                         'needs': [n.need for n in result.needs],
+                         'needs': [f"{n.need} ({'covered' if n.covered else 'missing'})" for n in result.needs],
                          'match_score': result.match_score.text if result.match_score else None,
                          'current_decision': any(_normal(q['current']) in _normal(d.quote) and
                              any(_normal(q['replaced']) in _normal(old.quote) for old in d.replaced)

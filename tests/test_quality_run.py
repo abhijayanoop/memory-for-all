@@ -78,3 +78,17 @@ def test_review_marks_and_full_score(tmp_path):
     assert next(c for c in checks if c.name == 'Wrong Abstention').passed
     assert not next(c for c in checks if c.name == 'Correct Abstention').passed
     assert not next(c for c in checks if c.name == 'Overall').passed
+
+
+def test_wrong_abstention_threshold_and_empty_answer():
+    from memoryforall.quality import Report
+    q = {'id': 1, 'question': 'amp', 'label': 'answerable', 'changed_mind': False}
+    row = {'question': q, 'finding': True, 'nothing_found': False, 'error': None,
+           'needs': ['need'] * 10, 'hallucinations': 0, 'wrong_missing': 1}
+    check = lambda: next(c for c in score(Report([row], {})) if c.name == 'Wrong Abstention')
+    assert check().passed
+    row['needs'].pop()
+    assert not check().passed
+    row.update(nothing_found=True, needs=[], wrong_missing=0, expected=2)
+    assert not check().passed
+    assert check().value.startswith('2/2')
