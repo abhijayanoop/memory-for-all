@@ -131,7 +131,7 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS, writer=None) -> int:
     Path(kb_path).mkdir(parents=True, exist_ok=True)
     kb = KnowledgeBase(kb_path, embedder or embedders[SEARCH_EMBEDDER[s["search_mode"]]](), embedders)
     if a.cmd == "quality":
-        from .quality import add, load_test_set, run, score, write_review, read_review
+        from .quality import add, load_test_set, run, score, write_review, read_review, floor_text
         from .pack import HostedWriter, LocalWriter, WritingModelError, NOT_FOUND_FLOOR
         from .chunk import MERGE_SIMILARITY, CAP
         try:
@@ -148,6 +148,7 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS, writer=None) -> int:
                                    "floor": NOT_FOUND_FLOOR, "merge cutoff": MERGE_SIMILARITY, "Chunk cap": CAP}
                 path = write_review(report, kb.folder / "quality" / "runs")
                 print(f"Review: {path}")
+                print(floor_text(report))
                 if test_set.shortfalls:
                     print("Test Set shortfall: " + ", ".join(test_set.shortfalls))
                 for name, selected, field in (
