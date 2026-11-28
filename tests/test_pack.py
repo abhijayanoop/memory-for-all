@@ -133,19 +133,20 @@ def test_cli_nothing_found_and_error(tmp_path, fake, capsys, monkeypatch):
 
 def test_local_writer_error_and_json(monkeypatch):
     import pytest
-    from memoryforall.pack import LocalWriter, WritingModelError
+    from memoryforall.pack import LocalWriter, WritingModelError, WritingModelConnectionError
     def unavailable(*args, **kwargs):
         raise OSError('unavailable')
     monkeypatch.setattr('urllib.request.urlopen', unavailable)
-    with pytest.raises(WritingModelError, match='ollama pull qwen3:4b-instruct'):
+    with pytest.raises(WritingModelConnectionError, match='ollama pull qwen3:4b-instruct'):
         LocalWriter().ask('prompt')
     class Response:
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def read(self): return b'{"response": "not json"}'
     monkeypatch.setattr('urllib.request.urlopen', lambda *args, **kwargs: Response())
-    with pytest.raises(WritingModelError):
+    with pytest.raises(WritingModelError) as error:
         LocalWriter().ask('prompt')
+    assert not isinstance(error.value, WritingModelConnectionError)
 
 
 import pytest

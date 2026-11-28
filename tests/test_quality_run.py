@@ -162,3 +162,36 @@ def test_current_decision_fails_for_nothing_found_and_writer_error(monkeypatch):
     report = run(kb, TestSet([q, {**q, 'id': 2, 'question': 'error'}], 3), None)
     check = next(c for c in score(report) if c.name == 'Current Decision')
     assert not check.passed and check.failures == ['nothing', 'error']
+
+
+def test_first_invalid_pack_continues_and_finding_uses_search(monkeypatch):
+    from memoryforall import quality
+    from memoryforall.pack import WritingModelError
+    hit = SimpleNamespace(score=.8, chunk=SimpleNamespace(platform='claude', chat_id='a', text='right phrase'))
+    kb = SimpleNamespace(search=lambda *args, **kwargs: [hit])
+    def fake_pack(kb, question, writer):
+        if question == 'first':
+            raise WritingModelError('invalid JSON')
+        return SimpleNamespace(text='pack', nothing_found=False, needs=[], match_score=None, decisions=[])
+    monkeypatch.setattr(quality, 'pack', fake_pack)
+    q = {'id': 1, 'question': 'first', 'label': 'answerable', 'changed_mind': False,
+         'right': [{'conversation': 'claude:a', 'phrase': 'right phrase'}]}
+    report = run(kb, TestSet([q, {**q, 'id': 2, 'question': 'second'}], 3), None)
+    report.questions[1].update(hallucinations=0, wrong_missing=0)
+    assert report.questions[0]['error'] == 'invalid JSON'
+    assert report.questions[0]['finding']
+    assert not next(c for c in score(report) if c.name == 'Finding').passed
+    assert not next(c for c in score(report) if c.name == 'Hallucination').passed
+
+
+def test_first_connection_failure_stops_run(monkeypatch):
+    import pytest
+    from memoryforall import quality
+    from memoryforall.pack import WritingModelConnectionError
+    kb = SimpleNamespace(search=lambda *args, **kwargs: [])
+    def fail(*args):
+        raise WritingModelConnectionError('start writer')
+    monkeypatch.setattr(quality, 'pack', fail)
+    q = {'id': 1, 'question': 'first', 'label': 'unanswerable', 'changed_mind': False, 'right': []}
+    with pytest.raises(WritingModelConnectionError, match='start writer'):
+        run(kb, TestSet([q], 2), None)

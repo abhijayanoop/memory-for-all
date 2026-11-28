@@ -20,6 +20,10 @@ class WritingModelError(RuntimeError):
     """A writing model could not produce a JSON object."""
 
 
+class WritingModelConnectionError(WritingModelError):
+    """The writing model could not be reached."""
+
+
 class LocalWriter:
     name = LOCAL_MODEL
 
@@ -36,7 +40,8 @@ class LocalWriter:
                 raise ValueError("expected an object")
             return result
         except (OSError, ValueError, KeyError, TypeError) as e:
-            raise WritingModelError(f"Local writing model failed. Start Ollama, then run: ollama pull {LOCAL_MODEL}") from e
+            error = WritingModelConnectionError if isinstance(e, OSError) and not isinstance(e, urllib.error.HTTPError) else WritingModelError
+            raise error(f"Local writing model failed. Start Ollama, then run: ollama pull {LOCAL_MODEL}") from e
 
 
 class HostedWriter:
@@ -68,8 +73,9 @@ class HostedWriter:
             if not isinstance(result, dict):
                 raise ValueError("expected an object")
             return result
-        except (OSError, ValueError, KeyError, TypeError, IndexError):
-            raise WritingModelError(f"Hosted pack-writing with {self.api} failed; check {key_name}, API access and billing, then try again.") from None
+        except (OSError, ValueError, KeyError, TypeError, IndexError) as e:
+            error = WritingModelConnectionError if isinstance(e, OSError) and not isinstance(e, urllib.error.HTTPError) else WritingModelError
+            raise error(f"Hosted pack-writing with {self.api} failed; check {key_name}, API access and billing, then try again.") from None
 
 
 @dataclass

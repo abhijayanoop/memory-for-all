@@ -104,7 +104,7 @@ def add(kb, question, label, changed_mind):
 
 
 from datetime import datetime
-from .pack import pack, WritingModelError
+from .pack import pack, WritingModelError, WritingModelConnectionError
 
 
 @dataclass
@@ -172,9 +172,9 @@ def run(kb, test_set, writer):
                              any(_normal(q['replaced']) in _normal(old.quote) for old in d.replaced)
                              for d in result.decisions)})
         except WritingModelError as e:
-            if index == 0:
+            if index == 0 and isinstance(e, WritingModelConnectionError):
                 raise
-            rows.append({'question': q, 'finding': False, 'nothing_found': False,
+            rows.append({'question': q, 'finding': finding, 'nothing_found': False,
                          'pack': None, 'error': str(e), 'floor_score': floor_score})
     return Report(rows, {})
 
