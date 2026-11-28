@@ -17,6 +17,8 @@ def test_prototype_database_summary(tmp_path, fake):
     kb.search = lambda *args, **kwargs: [SimpleNamespace(chunk=c, score=1) for c in chunks]
     class Writer:
         def ask(self, prompt):
+            if prompt.startswith('Split the Request'):
+                return {'needs': [{'need': 'database', 'quote': 1}]}
             return {'subjects': [{'quotes': [chosen, 'SQLite with Litestream backups'], 'replaces': ['SQLite with Litestream backups']}]}
     result = pack(kb, 'Which database did I choose for PennyPilot?', Writer())
     assert 'Changed from "' + 'SQLite with Litestream backups' + '"' not in result.text
@@ -35,6 +37,8 @@ def test_prototype_suggestion_is_not_previous_decision(tmp_path, fake):
     kb.search = lambda *args, **kwargs: [SimpleNamespace(chunk=c, score=1) for c in chunks]
     class Writer:
         def ask(self, prompt):
+            if prompt.startswith('Split the Request'):
+                return {'needs': [{'need': 'database', 'quote': 1}]}
             return {'subjects': [{'quotes': [suggestion, chosen], 'replaces': [suggestion]}]}
     result = pack(kb, 'Which database did I choose for PennyPilot?', Writer())
     assert 'Changed from "' + suggestion + '"' not in result.text
@@ -51,6 +55,8 @@ def test_assistant_response_cannot_replace_user_decision(tmp_path, fake):
     kb.search = lambda *a, **kw: [SimpleNamespace(chunk=chunk, score=1)]
     class Writer:
         def ask(self, prompt):
+            if prompt.startswith('Split the Request'):
+                return {'needs': [{'need': 'database', 'quote': 1}]}
             return {'subjects': [{'quotes': [response], 'replaces': ['SQLite with Litestream backups']}]}
     result = pack(kb, 'Which database did I choose for PennyPilot?', Writer())
     assert 'Changed from' not in result.text

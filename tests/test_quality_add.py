@@ -20,6 +20,21 @@ def test_other_invalid_fields(tmp_path, change, field):
     with pytest.raises(ValueError, match=f'Where.*{field}'):
         load_test_set(path)
 
+
+@pytest.mark.parametrize(('change', 'field'), [
+    ({'right': [{'conversation': 'claude:a', 'phrase': '!!!'}]}, 'right'),
+    ({'changed_mind': True, 'current': '!!!', 'replaced': 'old'}, 'current'),
+    ({'changed_mind': True, 'current': 'new', 'replaced': '...'}, 'replaced'),
+])
+def test_punctuation_only_phrases_are_invalid(tmp_path, change, field):
+    path = tmp_path / 'set.json'
+    q = {'id': 1, 'question': 'Where?', 'label': 'answerable', 'changed_mind': False,
+         'right': [{'conversation': 'claude:a', 'phrase': 'valid'}]}
+    q.update(change)
+    path.write_text(json.dumps({'questions': [q]}))
+    with pytest.raises(ValueError, match=f'Where.*{field}'):
+        load_test_set(path)
+
 def test_add_and_skip_quality_folder(tmp_path, fake, monkeypatch, capsys):
     kb = KnowledgeBase(tmp_path, fake)
     kb.save(validate({'platform': 'claude', 'chat_id': 'a', 'title': 'Chat', 'created': '2025-01-01T00:00:00Z', 'updated': '2025-01-01T00:00:00Z', 'messages': [{'sender': 'user', 'text': 'I chose the Katana'}, {'sender': 'assistant', 'text': 'ok'}]}))

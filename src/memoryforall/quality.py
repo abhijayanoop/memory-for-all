@@ -2,6 +2,7 @@ import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 from .pack import _normal
 
@@ -46,10 +47,10 @@ def load_test_set(path) -> TestSet:
         check(isinstance(right, list) and (q['label'] == 'unanswerable' or bool(right)), 'right')
         for mark in right:
             check(isinstance(mark, dict) and all(isinstance(mark.get(k), str) and mark[k].strip()
-                  for k in ('conversation', 'phrase')), 'right')
+                  for k in ('conversation', 'phrase')) and bool(_normal(mark['phrase'])), 'right')
         if q['changed_mind']:
             for field in ('current', 'replaced'):
-                check(isinstance(q.get(field), str) and bool(q[field].strip()), field)
+                check(isinstance(q.get(field), str) and bool(_normal(q[field])), field)
     next_id = data.get('next_id', max(ids, default=0) + 1)
     if type(next_id) is not int or next_id <= max(ids, default=0):
         raise ValueError('Test Set: invalid next_id')
@@ -203,7 +204,8 @@ def score(report):
                             f'{passed}/{len(selected)} (pass >= {threshold:.0%})', failures))
     rows = [r for r in report.questions if r['question']['label'] != 'unanswerable']
     names = lambda rs: [r['question']['question'] for r in rs]
-    failed = [r for r in rows if r['error'] or r['hallucinations']]
+    failed = [r for r in report.questions if r['error'] or
+              (r['question']['label'] != 'unanswerable' and r['hallucinations'])]
     checks.insert(1, Check('Hallucination', not failed, f"{sum(r.get('hallucinations', 0) for r in rows)} (pass = 0)", names(failed)))
     numerator = sum(r.get('wrong_missing', 0) + (r.get('expected', 0) if r['nothing_found'] else 0) for r in rows)
     denominator = sum(len(r.get('needs', [])) + (r.get('expected', 0) if r['nothing_found'] else 0) for r in rows)
@@ -222,8 +224,9 @@ def write_review(report, folder):
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / (datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '.md')
+    marker = uuid4().hex
     lines = ['# Quality review', '', *(f'{k}: {v}' for k, v in report.settings.items()), '', floor_text(report), '',
-             '<!-- quality-data ' + json.dumps({'questions': report.questions, 'settings': report.settings}, ensure_ascii=False).replace('-->', r'--\u003e') + ' -->']
+             '<!-- quality-data ' + json.dumps({'questions': report.questions, 'settings': report.settings, 'marker': marker}, ensure_ascii=False).replace('-->', r'--\u003e') + ' -->']
     for row in report.questions:
         q = row['question']
         lines.extend(['', f"## Q{q['id']}: {q['question']} ({q['label']})", '',
@@ -235,11 +238,13 @@ def write_review(report, folder):
         if q['changed_mind']:
             lines[-1] += f" · Current Decision {'pass' if row.get('current_decision') and not row['error'] else 'fail'}"
         if q['label'] != 'unanswerable' and not row['error']:
+            lines.append(f'<!-- quality-marks {marker} {q["id"]} -->')
             lines.extend(['Hallucinations: ____', 'Needs wrongly missing: ____'])
             if q['label'] == 'partly':
                 lines.append('Missing needs named exactly (yes/no): ____')
             if row['nothing_found']:
                 lines.append('Needs you expected: ____')
+            lines.append(f'<!-- end-quality-marks {marker} {q["id"]} -->')
     path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
     return path
 
@@ -248,15 +253,26 @@ def read_review(path):
     text = Path(path).read_text(encoding='utf-8')
     try:
         data = json.loads(text.split('<!-- quality-data ', 1)[1].split(' -->', 1)[0])
-        sections = text.split('\n## Q')[1:]
+        marker = data.get('marker')
+        if not marker:
+            for row in data['questions']:
+                if row.get('pack'):
+                    text = text.replace('\n' + row['pack'] + '\n', '\n[pack omitted]\n', 1)
+        sections = text.split('\n## Q')[1:] if not marker else [None] * len(data['questions'])
         if len(sections) != len(data['questions']):
             raise ValueError('question sections do not match')
         for row, section in zip(data['questions'], sections):
             q = row['question']
-            if not section.startswith(f"{q['id']}: {q['question']} ("):
+            if not marker and not section.startswith(f"{q['id']}: {q['question']} ("):
                 raise ValueError(f"{q['question']}: question section does not match")
             if q['label'] == 'unanswerable' or row['error']:
                 continue
+            if marker:
+                start = f'<!-- quality-marks {marker} {q["id"]} -->'
+                end = f'<!-- end-quality-marks {marker} {q["id"]} -->'
+                if text.count(start) != 1 or text.count(end) != 1:
+                    raise ValueError(f"{q['question']}: invalid marks section")
+                section = text.split(start, 1)[1].split(end, 1)[0]
             for label, field in (('Hallucinations', 'hallucinations'), ('Needs wrongly missing', 'wrong_missing'),
                                  ('Missing needs named exactly (yes/no)', 'missing_exact'), ('Needs you expected', 'expected')):
                 values = [line[len(label)+2:].strip() for line in section.splitlines() if line.startswith(label + ': ')]

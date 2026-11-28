@@ -54,6 +54,8 @@ class Writer:
         self.answer, self.calls = answer, 0
     def ask(self, prompt):
         self.calls += 1
+        if prompt.startswith('Split the Request'):
+            return {'needs': [{'need': 'request', 'quote': 1}]}
         return self.answer
 
 
@@ -401,6 +403,20 @@ def test_match_score_for_verified_needs(tmp_path, fake):
     needs[0]['quote'] = needs[2]['quote'] = None
     assert pack(kb, 'guitar', Scripted(needs)).match_score.text == '33%: missing guitar, amplifier'
     assert pack(kb, 'guitar', Writer({})).match_score is None
+
+
+def test_nonempty_pack_requires_valid_needs(tmp_path, fake):
+    import pytest
+    from memoryforall.pack import WritingModelError
+    kb = make(tmp_path, fake, [conv('a', 'I chose the blue guitar for recording')])
+    class Scripted:
+        def __init__(self, response): self.response, self.calls = response, 0
+        def ask(self, prompt):
+            self.calls += 1
+            return {'subjects': [{'quotes': ['I chose the blue guitar for recording']}]} if self.calls == 1 else self.response
+    for response in ({}, {'needs': []}, {'needs': [{'need': '   ', 'quote': 1}]}, {'needs': 'invalid'}):
+        with pytest.raises(WritingModelError, match='needs'):
+            pack(kb, 'guitar', Scripted(response))
 
 
 def test_cli_prints_match_score_after_needs(tmp_path, fake, capsys, monkeypatch):

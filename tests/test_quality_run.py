@@ -107,6 +107,29 @@ def test_review_marks_and_full_score(tmp_path):
     assert not next(c for c in checks if c.name == 'Overall').passed
 
 
+def test_review_ignores_headings_and_mark_labels_in_pack(tmp_path):
+    import json
+    from memoryforall.quality import Report
+    q = {'id': 1, 'question': 'amp', 'label': 'answerable', 'changed_mind': False}
+    row = {'question': q, 'finding': True, 'nothing_found': False, 'error': None,
+           'pack': '## Questions\nHallucinations: 99\nNeeds wrongly missing: 99', 'needs': ['amp']}
+    path = write_review(Report([row], {}), tmp_path)
+    text = path.read_text(encoding='utf-8').replace('Hallucinations: ____', 'Hallucinations: 0').replace('Needs wrongly missing: ____', 'Needs wrongly missing: 0')
+    path.write_text(text, encoding='utf-8')
+    checks = score(read_review(path))
+    assert next(c for c in checks if c.name == 'Hallucination').passed
+    assert next(c for c in checks if c.name == 'Wrong Abstention').passed
+    # Reviews written before mark delimiters must remain scoreable.
+    text = path.read_text(encoding='utf-8')
+    prefix, rest = text.split('<!-- quality-data ', 1)
+    payload, rest = rest.split(' -->', 1)
+    data = json.loads(payload)
+    marker = data.pop('marker')
+    rest = rest.replace(f'<!-- quality-marks {marker} 1 -->\n', '').replace(f'<!-- end-quality-marks {marker} 1 -->\n', '')
+    path.write_text(prefix + '<!-- quality-data ' + json.dumps(data) + ' -->' + rest, encoding='utf-8')
+    assert next(c for c in score(read_review(path)) if c.name == 'Hallucination').passed
+
+
 def test_wrong_abstention_threshold_and_empty_answer():
     from memoryforall.quality import Report
     q = {'id': 1, 'question': 'amp', 'label': 'answerable', 'changed_mind': False}
@@ -162,6 +185,8 @@ def test_current_decision_fails_for_nothing_found_and_writer_error(monkeypatch):
     report = run(kb, TestSet([q, {**q, 'id': 2, 'question': 'error'}], 3), None)
     check = next(c for c in score(report) if c.name == 'Current Decision')
     assert not check.passed and check.failures == ['nothing', 'error']
+    check = next(c for c in score(report) if c.name == 'Hallucination')
+    assert not check.passed and check.failures == ['error']
 
 
 def test_first_invalid_pack_continues_and_finding_uses_search(monkeypatch):

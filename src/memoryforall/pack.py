@@ -269,11 +269,13 @@ def pack(kb, request, writer):
     items = answer.get("needs", [])
     if isinstance(items, list):
         for item in items[:4]:
-            if not isinstance(item, dict) or not isinstance(item.get("need"), str):
+            if not isinstance(item, dict) or not isinstance(item.get("need"), str) or not item["need"].strip():
                 continue
             number = item.get("quote")
             quote = evidence[number - 1].quote if type(number) is int and 1 <= number <= len(evidence) else None
             needs.append(Need(item["need"], quote is not None, quote))
+    if not needs:
+        raise WritingModelError("Writing model returned no valid needs; check the model and try again.")
     def cite(d):
         return f'"{d.quote}" ' + " ".join(f"[{i}]" for i in d.sources) + f" ({d.date[:10]})"
 
