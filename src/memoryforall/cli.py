@@ -82,6 +82,11 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS, writer=None) -> int:
     add_p.add_argument("--label", required=True, choices=("answerable", "partly", "unanswerable"))
     add_p.add_argument("--changed-mind", action="store_true")
     add_p.add_argument("--kb")
+    run_p = quality_sub.add_parser("run")
+    run_p.add_argument("--kb")
+    score_p = quality_sub.add_parser("score")
+    score_p.add_argument("review", nargs="?")
+    score_p.add_argument("--kb")
     for cmd_p in sub.choices.values():
         cmd_p.add_argument("--kb")
     sub.add_parser("set-kb").add_argument("path")
@@ -126,13 +131,39 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS, writer=None) -> int:
     Path(kb_path).mkdir(parents=True, exist_ok=True)
     kb = KnowledgeBase(kb_path, embedder or embedders[SEARCH_EMBEDDER[s["search_mode"]]](), embedders)
     if a.cmd == "quality":
-        from .quality import add
+        from .quality import add, load_test_set, run, score, write_review, read_review
+        from .pack import HostedWriter, LocalWriter, WritingModelError, NOT_FOUND_FLOOR
+        from .chunk import MERGE_SIMILARITY, CAP
         try:
-            add(kb, a.question, a.label, a.changed_mind)
-        except ValueError as e:
+            if a.quality_cmd == "add":
+                add(kb, a.question, a.label, a.changed_mind)
+                return 0
+            if a.quality_cmd == "run":
+                test_set = load_test_set(kb.folder / "quality" / "test-set.json")
+                pack_writer = writer or (HostedWriter(s["pack_api"]) if s["pack_mode"] == "hosted" else LocalWriter())
+                report = run(kb, test_set, pack_writer)
+                report.settings = {"search Mode": s["search_mode"], "pack Mode": s["pack_mode"],
+                                   "pack API": s["pack_api"], "writing model": getattr(pack_writer, "name", type(pack_writer).__name__),
+                                   "re-ranker": getattr(kb.reranker, "name", type(kb.reranker).__name__),
+                                   "floor": NOT_FOUND_FLOOR, "merge cutoff": MERGE_SIMILARITY, "Chunk cap": CAP}
+                path = write_review(report, kb.folder / "quality" / "runs")
+                print(f"Review: {path}")
+                if test_set.shortfalls:
+                    print("Test Set shortfall: " + ", ".join(test_set.shortfalls))
+            else:
+                paths = sorted((kb.folder / "quality" / "runs").glob("*.md"))
+                if not a.review and not paths:
+                    raise ValueError("No review file found; run: memoryforall quality run")
+                report = read_review(a.review or paths[-1])
+            checks = score(report)
+            for check in checks:
+                print(f"{check.name}: {check.value} {'PASS' if check.passed else 'FAIL'}")
+                for question in check.failures:
+                    print(f"  {question}")
+            return 0 if all(check.passed for check in checks) else 1
+        except (ValueError, OSError, WritingModelError) as e:
             print(e, file=sys.stderr)
             return 2
-        return 0
     if a.cmd in ("search", "status", "pack"):  # not for reindex: it must still recover a damaged index file
         live, pending = kb.index_embedder(), kb.reembed_pending()
     if a.cmd == "import":

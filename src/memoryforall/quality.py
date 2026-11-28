@@ -100,3 +100,79 @@ def add(kb, question, label, changed_mind):
     print(f'Added question {q["id"]}.')
     if test_set.shortfalls:
         print('Test Set shortfall: ' + ', '.join(test_set.shortfalls))
+
+
+from datetime import datetime
+from .pack import pack, WritingModelError
+
+
+@dataclass
+class Report:
+    questions: list
+    settings: dict
+
+
+@dataclass
+class Check:
+    name: str
+    passed: bool
+    value: str
+    failures: list
+
+
+def run(kb, test_set, writer):
+    rows = []
+    for index, q in enumerate(test_set.questions):
+        hits = kb.search(q['question'], k=8)[:8]
+        finding = any(f'{h.chunk.platform}:{h.chunk.chat_id}' == mark['conversation']
+                      and _normal(mark['phrase']) in _normal(h.chunk.text)
+                      for h in hits for mark in q.get('right', []))
+        try:
+            result = pack(kb, q['question'], writer)
+            rows.append({'question': q, 'finding': finding, 'nothing_found': result.nothing_found,
+                         'pack': result.text, 'error': None})
+        except WritingModelError as e:
+            if index == 0:
+                raise
+            rows.append({'question': q, 'finding': False, 'nothing_found': False,
+                         'pack': None, 'error': str(e)})
+    return Report(rows, {})
+
+
+def score(report):
+    checks = []
+    for name, selected, threshold in (
+        ('Finding', [r for r in report.questions if r['question']['label'] != 'unanswerable'], 0.9),
+        ('Correct Abstention', [r for r in report.questions if r['question']['label'] == 'unanswerable'], 1.0),
+    ):
+        failures = [r['question']['question'] for r in selected if r['error'] or not (
+            r['finding'] if name == 'Finding' else r['nothing_found'])]
+        passed = len(selected) - len(failures)
+        checks.append(Check(name, not selected or passed / len(selected) >= threshold,
+                            f'{passed}/{len(selected)} (pass >= {threshold:.0%})', failures))
+    return checks
+
+
+def write_review(report, folder):
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / (datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '.md')
+    lines = ['# Quality review', '', *(f'{k}: {v}' for k, v in report.settings.items()), '',
+             '<!-- quality-data ' + json.dumps({'questions': report.questions, 'settings': report.settings}, ensure_ascii=False).replace('-->', r'--\u003e') + ' -->']
+    for row in report.questions:
+        q = row['question']
+        lines.extend(['', f"## Q{q['id']}: {q['question']} ({q['label']})", '',
+                      row['error'] or row['pack'] or 'Nothing found in your chats for this',
+                      '', f"Automatic: Finding {'pass' if row['finding'] else 'fail'}" if q['label'] != 'unanswerable'
+                      else f"Automatic: Correct Abstention {'pass' if row['nothing_found'] and not row['error'] else 'fail'}"])
+    path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    return path
+
+
+def read_review(path):
+    text = Path(path).read_text(encoding='utf-8')
+    try:
+        data = json.loads(text.split('<!-- quality-data ', 1)[1].split(' -->', 1)[0])
+        return Report(data['questions'], data['settings'])
+    except (IndexError, KeyError, ValueError, TypeError) as e:
+        raise ValueError(f'Invalid review file: {path}') from e
