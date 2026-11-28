@@ -194,11 +194,32 @@ def pack(kb, request, writer):
         if not verified:
             continue
         verified.sort(key=lambda pair: pair[0].date, reverse=True)
+        displayed = verified
         if valid_replacement:
-            verified[0][0].replaced = [d for d, _ in verified[1:]]
-            displayed = verified[:1]
-        else:
-            displayed = verified
+            current, current_matches = verified[0]
+            lead = max(current_matches, key=lambda m: (sources[m[0] - 1].chunk.date, -m[0]))
+            lead_chunk = sources[lead[0] - 1].chunk
+            accepted, accepted_matches = verify(subject.get("accepted_by", "")) if current.speaker != "You" else (None, [])
+            accepted_current = bool(accepted and any(
+                speaker == "You"
+                and (sources[i - 1].chunk.platform, sources[i - 1].chunk.chat_id) == (lead_chunk.platform, lead_chunk.chat_id)
+                and (sources[i - 1].chunk.position, pos, offset) > (lead_chunk.position, lead[2], lead[3])
+                for i, speaker, pos, offset in accepted_matches))
+            old_pairs = []
+            for old, matches in verified[1:]:
+                if old.quote not in replacements or old.speaker != "You" or (current.speaker != "You" and not accepted_current):
+                    continue
+                prior = max(matches, key=lambda m: (sources[m[0] - 1].chunk.date, -m[0]))
+                chunk = sources[prior[0] - 1].chunk
+                same_chat = (chunk.platform, chunk.chat_id) == (lead_chunk.platform, lead_chunk.chat_id)
+                earlier = chunk.date < lead_chunk.date or (chunk.date == lead_chunk.date and same_chat
+                           and (chunk.position, prior[2]) < (lead_chunk.position, lead[2]))
+                if earlier:
+                    old_pairs.append((old, matches))
+            current.replaced = [old for old, _ in old_pairs]
+            displayed = [pair for pair in verified if pair not in old_pairs]
+            if not old_pairs:
+                displayed.sort(key=lambda pair: pair[0].speaker == "You", reverse=True)
         for decision, matches in displayed:
             if decision.speaker != "You":
                 decision.suggested = True
