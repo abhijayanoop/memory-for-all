@@ -133,9 +133,9 @@ def run(kb, test_set, writer):
                          'pack': result.text, 'error': None,
                          'needs': [f"{n.need} ({'covered' if n.covered else 'missing'})" for n in result.needs],
                          'match_score': result.match_score.text if result.match_score else None,
-                         'current_decision': any(_normal(q['current']) in _normal(d.quote) and
+                         'current_decision': q['changed_mind'] and not result.nothing_found and any(_normal(q['current']) in _normal(d.quote) and
                              any(_normal(q['replaced']) in _normal(old.quote) for old in d.replaced)
-                             for d in result.decisions) if q['changed_mind'] else None})
+                             for d in result.decisions)})
         except WritingModelError as e:
             if index == 0:
                 raise
@@ -197,6 +197,8 @@ def write_review(report, folder):
                       'Needs: ' + (', '.join(row.get('needs', [])) or 'none'),
                       '', f"Automatic: Finding {'pass' if row['finding'] else 'fail'}" if q['label'] != 'unanswerable'
                       else f"Automatic: Correct Abstention {'pass' if row['nothing_found'] and not row['error'] else 'fail'}"])
+        if q['changed_mind']:
+            lines[-1] += f" · Current Decision {'pass' if row.get('current_decision') and not row['error'] else 'fail'}"
         if q['label'] != 'unanswerable' and not row['error']:
             lines.extend(['Hallucinations: ____', 'Needs wrongly missing: ____'])
             if q['label'] == 'partly':

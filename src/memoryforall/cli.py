@@ -150,10 +150,13 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS, writer=None) -> int:
                 print(f"Review: {path}")
                 if test_set.shortfalls:
                     print("Test Set shortfall: " + ", ".join(test_set.shortfalls))
-                for row in report.questions:
-                    q = row['question']
-                    result = row['finding'] if q['label'] != 'unanswerable' else row['nothing_found']
-                    print(f"{q['question']}: {'PASS' if result and not row['error'] else 'FAIL'}")
+                for name, selected, field in (
+                    ('Finding', [r for r in report.questions if r['question']['label'] != 'unanswerable'], 'finding'),
+                    ('Correct Abstention', [r for r in report.questions if r['question']['label'] == 'unanswerable'], 'nothing_found'),
+                    ('Current Decision', [r for r in report.questions if r['question']['changed_mind']], 'current_decision'),
+                ):
+                    passed = sum(not r['error'] and bool(r.get(field)) for r in selected)
+                    print(f'{name}: {passed}/{len(selected)}')
                 return 0
             else:
                 paths = sorted((kb.folder / "quality" / "runs").glob("*.md"))
