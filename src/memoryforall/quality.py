@@ -1,4 +1,5 @@
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -120,22 +121,56 @@ class Check:
     failures: list
 
 
+@dataclass
+class FloorSuggestion:
+    floor: float
+    unanswerable_let_through: int
+    answerable_emptied: int
+
+
+def suggest_floor(report):
+    values = [r.get('floor_score') for r in report.questions if r.get('floor_score') is not None]
+    if not values:
+        return None
+    candidates = sorted(set(values + [math.nextafter(v, math.inf) for v in values]))
+    def suggestion(floor):
+        let_through = sum(r['question']['label'] == 'unanswerable' and r.get('floor_score') is not None
+                          and r['floor_score'] >= floor for r in report.questions)
+        emptied = sum(r['question']['label'] != 'unanswerable' and
+                      (r.get('floor_score') is None or r['floor_score'] < floor) for r in report.questions)
+        return FloorSuggestion(floor, let_through, emptied)
+    return min((suggestion(v) for v in candidates),
+               key=lambda s: (s.unanswerable_let_through + s.answerable_emptied, s.floor))
+
+
+def floor_text(report):
+    suggestion = suggest_floor(report)
+    if suggestion is None:
+        return 'Suggested floor: unavailable (no scores)'
+    return (f'Suggested floor: {suggestion.floor!r} '
+            f'(unanswerable let through: {suggestion.unanswerable_let_through}, '
+            f'answerable wrongly emptied: {suggestion.answerable_emptied})')
+
+
 def run(kb, test_set, writer):
     rows = []
     for index, q in enumerate(test_set.questions):
         hits = kb.search(q['question'], k=8)[:8]
-        finding = any(f'{h.chunk.platform}:{h.chunk.chat_id}' == mark['conversation']
+        right_hits = [h for h in hits if any(f'{h.chunk.platform}:{h.chunk.chat_id}' == mark['conversation']
                       and _normal(mark['phrase']) in _normal(h.chunk.text)
-                      for h in hits for mark in q.get('right', []))
+                      for mark in q.get('right', []))]
+        finding = bool(right_hits)
+        floor_score = (hits[0].score if hits else None) if q['label'] == 'unanswerable' else max(
+            (h.score for h in right_hits), default=None)
         try:
             result = pack(kb, q['question'], writer)
             rows.append({'question': q, 'finding': finding, 'nothing_found': result.nothing_found,
-                         'pack': result.text, 'error': None})
+                         'pack': result.text, 'error': None, 'floor_score': floor_score})
         except WritingModelError as e:
             if index == 0:
                 raise
             rows.append({'question': q, 'finding': False, 'nothing_found': False,
-                         'pack': None, 'error': str(e)})
+                         'pack': None, 'error': str(e), 'floor_score': floor_score})
     return Report(rows, {})
 
 
@@ -157,7 +192,7 @@ def write_review(report, folder):
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / (datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '.md')
-    lines = ['# Quality review', '', *(f'{k}: {v}' for k, v in report.settings.items()), '',
+    lines = ['# Quality review', '', *(f'{k}: {v}' for k, v in report.settings.items()), '', floor_text(report), '',
              '<!-- quality-data ' + json.dumps({'questions': report.questions, 'settings': report.settings}, ensure_ascii=False).replace('-->', r'--\u003e') + ' -->']
     for row in report.questions:
         q = row['question']
