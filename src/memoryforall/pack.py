@@ -227,7 +227,7 @@ def pack(kb, request, writer):
                 for i, speaker, pos, offset in accepted_matches))
             old_pairs = []
             for old, matches in verified[1:]:
-                if old.quote not in replacements or old.speaker != "You" or (current.speaker != "You" and not accepted_current):
+                if (old.quote not in replacements and current.quote not in replacements) or old.speaker != "You" or (current.speaker != "You" and not accepted_current):
                     continue
                 prior = max(matches, key=lambda m: (sources[m[0] - 1].chunk.date, -m[0]))
                 chunk = sources[prior[0] - 1].chunk

@@ -332,6 +332,10 @@ def test_current_decision_and_plain_facts(tmp_path, fake):
     assert 'I chose the new guitar model' in short
     assert 'I chose the new guitar model' in rest.split('Changed from')[0]
     assert 'Changed from "I chose the old guitar model" [1] (2025-01-01)' in rest
+    result = pack(kb, 'guitar', Writer({'subjects': [{'quotes': ['I chose the old guitar model'], 'replaces': ['I chose the new guitar model']}]}))
+    assert result.decisions[0].quote == 'I chose the new guitar model'
+    assert [d.quote for d in result.decisions[0].replaced] == ['I chose the old guitar model']
+    assert 'Changed from "I chose the old guitar model"' in result.text
     result = pack(kb, 'guitar', Writer({'subjects': [{'quotes': ['I chose the old guitar model', 'I chose the new guitar model']}]}))
     assert 'Changed from' not in result.text
 
