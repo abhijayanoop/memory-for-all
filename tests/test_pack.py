@@ -379,3 +379,41 @@ def test_review_quote_regressions(tmp_path, fake):
     assert 'Changed from' not in result.text and len(result.decisions) == 2
     result = pack(kb, 'guitar', Writer({'subjects': [{'quotes': ['browsed the cat']}]}))
     assert result.nothing_found
+
+
+def test_match_score_for_verified_needs(tmp_path, fake):
+    kb = make(tmp_path, fake, [conv('a', 'I chose the blue guitar for recording')])
+    class Scripted:
+        def __init__(self, needs): self.needs, self.calls = needs, 0
+        def ask(self, prompt):
+            self.calls += 1
+            return ({'subjects': [{'quotes': ['I chose the blue guitar for recording', 'invented words here']}]} if self.calls == 1
+                    else {'needs': self.needs})
+    needs = [{'need': 'guitar', 'quote': 1}, {'need': 'recording', 'quote': 1}, {'need': 'amplifier', 'quote': 2}]
+    result = pack(kb, 'guitar and recording and amplifier', Scripted(needs))
+    assert result.match_score.percentage == 67
+    assert result.match_score.missing_needs == ['amplifier']
+    assert result.match_score.text == '67%: missing amplifier'
+    assert result.match_score.text not in result.text
+    needs[2]['quote'] = 1
+    assert pack(kb, 'guitar', Scripted(needs)).match_score.text == '100%'
+    needs[0]['quote'] = needs[2]['quote'] = None
+    assert pack(kb, 'guitar', Scripted(needs)).match_score.text == '33%: missing guitar, amplifier'
+    assert pack(kb, 'guitar', Writer({})).match_score is None
+
+
+def test_cli_prints_match_score_after_needs(tmp_path, fake, capsys, monkeypatch):
+    from memoryforall.cli import main
+    monkeypatch.setenv('MEMORYFORALL_CONFIG_DIR', str(tmp_path / 'config'))
+    kb = make(tmp_path / 'kb', fake, [conv('a', 'I chose the blue guitar for recording')])
+    class Scripted:
+        def __init__(self): self.calls = 0
+        def ask(self, prompt):
+            self.calls += 1
+            return ({'subjects': [{'quotes': ['I chose the blue guitar for recording']}]} if self.calls == 1
+                    else {'needs': [{'need': 'guitar', 'quote': 1}, {'need': 'price', 'quote': None}]})
+    assert main(['pack', 'guitar', '--kb', str(kb.folder)], embedder=fake, writer=Scripted()) == 0
+    output = capsys.readouterr()
+    assert 'Match Score: 50%: missing price' in output.err
+    assert output.err.index('price: missing') < output.err.index('Match Score:')
+    assert 'Match Score' not in output.out

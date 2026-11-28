@@ -176,6 +176,8 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS, writer=None) -> int:
             print(result.text)
             for need in result.needs:
                 print(f"{need.need}: {'covered' if need.covered else 'missing'}", file=sys.stderr)
+            if result.match_score:
+                print(f"Match Score: {result.match_score.text}", file=sys.stderr)
     elif a.cmd == "search":
         try:
             hits = kb.search(a.request, a.k)

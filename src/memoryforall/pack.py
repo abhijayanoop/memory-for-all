@@ -97,6 +97,13 @@ class Need:
 
 
 @dataclass
+class MatchScore:
+    percentage: int
+    missing_needs: list[str]
+    text: str
+
+
+@dataclass
 class PackResult:
     text: str | None
     nothing_found: bool
@@ -106,6 +113,7 @@ class PackResult:
     dropped: list
     seconds: float
     over_limit: bool
+    match_score: MatchScore | None
 
 
 def _normal(text):
@@ -131,8 +139,14 @@ def pack(kb, request, writer):
     decisions, needs, dropped = [], [], []
 
     def result(text=None):
+        match_score = None
+        if text is not None and needs:
+            missing = [need.need for need in needs if not need.covered]
+            percentage = round(100 * (len(needs) - len(missing)) / len(needs))
+            score_text = f"{percentage}%" + (f": missing {', '.join(missing)}" if missing else "")
+            match_score = MatchScore(percentage, missing, score_text)
         return PackResult(text, text is None, sources, decisions, needs, dropped, time.monotonic() - started,
-                          text is not None and len(text) > PACK_LIMIT)
+                          text is not None and len(text) > PACK_LIMIT, match_score)
 
     if not sources:
         return result()
