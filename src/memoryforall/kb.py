@@ -202,6 +202,8 @@ class KnowledgeBase:
     def conversations(self) -> list[Conversation]:
         out = []
         for p in sorted(self.folder.rglob("*.md")):
+            if p.relative_to(self.folder).parts[0] == "quality":
+                continue
             r = parse(p.read_text(encoding="utf-8"))
             if r:
                 out.append(r[0])
@@ -266,6 +268,8 @@ class KnowledgeBase:
 
         seen, keys = set(), set()
         for p in sorted(self.folder.rglob("*.md")):
+            if p.relative_to(self.folder).parts[0] == "quality":
+                continue
             rel = p.relative_to(self.folder).as_posix()
             raw = p.read_bytes()
             try:

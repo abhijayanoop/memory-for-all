@@ -75,6 +75,13 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS, writer=None) -> int:
     search_p = sub.add_parser("search")
     search_p.add_argument("request")
     search_p.add_argument("-k", type=int, default=5)
+    quality_p = sub.add_parser("quality")
+    quality_sub = quality_p.add_subparsers(dest="quality_cmd", required=True)
+    add_p = quality_sub.add_parser("add")
+    add_p.add_argument("question")
+    add_p.add_argument("--label", required=True, choices=("answerable", "partly", "unanswerable"))
+    add_p.add_argument("--changed-mind", action="store_true")
+    add_p.add_argument("--kb")
     for cmd_p in sub.choices.values():
         cmd_p.add_argument("--kb")
     sub.add_parser("set-kb").add_argument("path")
@@ -118,6 +125,14 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS, writer=None) -> int:
         return 2
     Path(kb_path).mkdir(parents=True, exist_ok=True)
     kb = KnowledgeBase(kb_path, embedder or embedders[SEARCH_EMBEDDER[s["search_mode"]]](), embedders)
+    if a.cmd == "quality":
+        from .quality import add
+        try:
+            add(kb, a.question, a.label, a.changed_mind)
+        except ValueError as e:
+            print(e, file=sys.stderr)
+            return 2
+        return 0
     if a.cmd in ("search", "status", "pack"):  # not for reindex: it must still recover a damaged index file
         live, pending = kb.index_embedder(), kb.reembed_pending()
     if a.cmd == "import":
@@ -170,7 +185,8 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS, writer=None) -> int:
         if pending:
             print(f"note: re-embed pending; searching the index built with {live} until the next reindex")
         idx = kb.index_path
-        if idx.exists() and any(p.stat().st_mtime > idx.stat().st_mtime for p in kb.folder.rglob("*.md")):
+        if idx.exists() and any(p.stat().st_mtime > idx.stat().st_mtime for p in kb.folder.rglob("*.md")
+                                if p.relative_to(kb.folder).parts[0] != "quality"):
             print("note: files changed since the last reindex; run: memoryforall reindex")
         if not hits:
             print("No matches." if kb.chunks() else "The index is empty or missing. Run: memoryforall reindex")
