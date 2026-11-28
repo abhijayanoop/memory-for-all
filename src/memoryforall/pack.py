@@ -20,6 +20,10 @@ class WritingModelError(RuntimeError):
     """A writing model could not produce a JSON object."""
 
 
+class WritingModelConnectionError(WritingModelError):
+    """The writing model could not be reached."""
+
+
 class LocalWriter:
     name = LOCAL_MODEL
 
@@ -36,7 +40,8 @@ class LocalWriter:
                 raise ValueError("expected an object")
             return result
         except (OSError, ValueError, KeyError, TypeError) as e:
-            raise WritingModelError(f"Local writing model failed. Start Ollama, then run: ollama pull {LOCAL_MODEL}") from e
+            error = WritingModelConnectionError if isinstance(e, OSError) and not isinstance(e, urllib.error.HTTPError) else WritingModelError
+            raise error(f"Local writing model failed. Start Ollama, then run: ollama pull {LOCAL_MODEL}") from e
 
 
 class HostedWriter:
@@ -68,8 +73,9 @@ class HostedWriter:
             if not isinstance(result, dict):
                 raise ValueError("expected an object")
             return result
-        except (OSError, ValueError, KeyError, TypeError, IndexError):
-            raise WritingModelError(f"Hosted pack-writing with {self.api} failed; check {key_name}, API access and billing, then try again.") from None
+        except (OSError, ValueError, KeyError, TypeError, IndexError) as e:
+            error = WritingModelConnectionError if isinstance(e, OSError) and not isinstance(e, urllib.error.HTTPError) else WritingModelError
+            raise error(f"Hosted pack-writing with {self.api} failed; check {key_name}, API access and billing, then try again.") from None
 
 
 @dataclass
@@ -97,6 +103,13 @@ class Need:
 
 
 @dataclass
+class MatchScore:
+    percentage: int
+    missing_needs: list[str]
+    text: str
+
+
+@dataclass
 class PackResult:
     text: str | None
     nothing_found: bool
@@ -106,6 +119,7 @@ class PackResult:
     dropped: list
     seconds: float
     over_limit: bool
+    match_score: MatchScore | None
 
 
 def _normal(text):
@@ -131,8 +145,14 @@ def pack(kb, request, writer):
     decisions, needs, dropped = [], [], []
 
     def result(text=None):
+        match_score = None
+        if text is not None and needs:
+            missing = [need.need for need in needs if not need.covered]
+            percentage = round(100 * (len(needs) - len(missing)) / len(needs))
+            score_text = f"{percentage}%" + (f": missing {', '.join(missing)}" if missing else "")
+            match_score = MatchScore(percentage, missing, score_text)
         return PackResult(text, text is None, sources, decisions, needs, dropped, time.monotonic() - started,
-                          text is not None and len(text) > PACK_LIMIT)
+                          text is not None and len(text) > PACK_LIMIT, match_score)
 
     if not sources:
         return result()
@@ -194,11 +214,32 @@ def pack(kb, request, writer):
         if not verified:
             continue
         verified.sort(key=lambda pair: pair[0].date, reverse=True)
+        displayed = verified
         if valid_replacement:
-            verified[0][0].replaced = [d for d, _ in verified[1:]]
-            displayed = verified[:1]
-        else:
-            displayed = verified
+            current, current_matches = verified[0]
+            lead = max(current_matches, key=lambda m: (sources[m[0] - 1].chunk.date, -m[0]))
+            lead_chunk = sources[lead[0] - 1].chunk
+            accepted, accepted_matches = verify(subject.get("accepted_by", "")) if current.speaker != "You" else (None, [])
+            accepted_current = bool(accepted and any(
+                speaker == "You"
+                and (sources[i - 1].chunk.platform, sources[i - 1].chunk.chat_id) == (lead_chunk.platform, lead_chunk.chat_id)
+                and (sources[i - 1].chunk.position, pos, offset) > (lead_chunk.position, lead[2], lead[3])
+                for i, speaker, pos, offset in accepted_matches))
+            old_pairs = []
+            for old, matches in verified[1:]:
+                if (old.quote not in replacements and current.quote not in replacements) or old.speaker != "You" or (current.speaker != "You" and not accepted_current):
+                    continue
+                prior = max(matches, key=lambda m: (sources[m[0] - 1].chunk.date, -m[0]))
+                chunk = sources[prior[0] - 1].chunk
+                same_chat = (chunk.platform, chunk.chat_id) == (lead_chunk.platform, lead_chunk.chat_id)
+                earlier = chunk.date < lead_chunk.date or (chunk.date == lead_chunk.date and same_chat
+                           and (chunk.position, prior[2]) < (lead_chunk.position, lead[2]))
+                if earlier:
+                    old_pairs.append((old, matches))
+            current.replaced = [old for old, _ in old_pairs]
+            displayed = [pair for pair in verified if pair not in old_pairs]
+            if not old_pairs:
+                displayed.sort(key=lambda pair: pair[0].speaker == "You", reverse=True)
         for decision, matches in displayed:
             if decision.speaker != "You":
                 decision.suggested = True
@@ -228,11 +269,13 @@ def pack(kb, request, writer):
     items = answer.get("needs", [])
     if isinstance(items, list):
         for item in items[:4]:
-            if not isinstance(item, dict) or not isinstance(item.get("need"), str):
+            if not isinstance(item, dict) or not isinstance(item.get("need"), str) or not item["need"].strip():
                 continue
             number = item.get("quote")
             quote = evidence[number - 1].quote if type(number) is int and 1 <= number <= len(evidence) else None
             needs.append(Need(item["need"], quote is not None, quote))
+    if not needs:
+        raise WritingModelError("Writing model returned no valid needs; check the model and try again.")
     def cite(d):
         return f'"{d.quote}" ' + " ".join(f"[{i}]" for i in d.sources) + f" ({d.date[:10]})"
 

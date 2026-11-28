@@ -54,6 +54,8 @@ class Writer:
         self.answer, self.calls = answer, 0
     def ask(self, prompt):
         self.calls += 1
+        if prompt.startswith('Split the Request'):
+            return {'needs': [{'need': 'request', 'quote': 1}]}
         return self.answer
 
 
@@ -133,19 +135,20 @@ def test_cli_nothing_found_and_error(tmp_path, fake, capsys, monkeypatch):
 
 def test_local_writer_error_and_json(monkeypatch):
     import pytest
-    from memoryforall.pack import LocalWriter, WritingModelError
+    from memoryforall.pack import LocalWriter, WritingModelError, WritingModelConnectionError
     def unavailable(*args, **kwargs):
         raise OSError('unavailable')
     monkeypatch.setattr('urllib.request.urlopen', unavailable)
-    with pytest.raises(WritingModelError, match='ollama pull qwen3:4b-instruct'):
+    with pytest.raises(WritingModelConnectionError, match='ollama pull qwen3:4b-instruct'):
         LocalWriter().ask('prompt')
     class Response:
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def read(self): return b'{"response": "not json"}'
     monkeypatch.setattr('urllib.request.urlopen', lambda *args, **kwargs: Response())
-    with pytest.raises(WritingModelError):
+    with pytest.raises(WritingModelError) as error:
         LocalWriter().ask('prompt')
+    assert not isinstance(error.value, WritingModelConnectionError)
 
 
 import pytest
@@ -329,6 +332,10 @@ def test_current_decision_and_plain_facts(tmp_path, fake):
     assert 'I chose the new guitar model' in short
     assert 'I chose the new guitar model' in rest.split('Changed from')[0]
     assert 'Changed from "I chose the old guitar model" [1] (2025-01-01)' in rest
+    result = pack(kb, 'guitar', Writer({'subjects': [{'quotes': ['I chose the old guitar model'], 'replaces': ['I chose the new guitar model']}]}))
+    assert result.decisions[0].quote == 'I chose the new guitar model'
+    assert [d.quote for d in result.decisions[0].replaced] == ['I chose the old guitar model']
+    assert 'Changed from "I chose the old guitar model"' in result.text
     result = pack(kb, 'guitar', Writer({'subjects': [{'quotes': ['I chose the old guitar model', 'I chose the new guitar model']}]}))
     assert 'Changed from' not in result.text
 
@@ -379,3 +386,55 @@ def test_review_quote_regressions(tmp_path, fake):
     assert 'Changed from' not in result.text and len(result.decisions) == 2
     result = pack(kb, 'guitar', Writer({'subjects': [{'quotes': ['browsed the cat']}]}))
     assert result.nothing_found
+
+
+def test_match_score_for_verified_needs(tmp_path, fake):
+    kb = make(tmp_path, fake, [conv('a', 'I chose the blue guitar for recording')])
+    class Scripted:
+        def __init__(self, needs): self.needs, self.calls = needs, 0
+        def ask(self, prompt):
+            self.calls += 1
+            return ({'subjects': [{'quotes': ['I chose the blue guitar for recording', 'invented words here']}]} if self.calls == 1
+                    else {'needs': self.needs})
+    needs = [{'need': 'guitar', 'quote': 1}, {'need': 'recording', 'quote': 1}, {'need': 'amplifier', 'quote': 2}]
+    result = pack(kb, 'guitar and recording and amplifier', Scripted(needs))
+    assert result.match_score.percentage == 67
+    assert result.match_score.missing_needs == ['amplifier']
+    assert result.match_score.text == '67%: missing amplifier'
+    assert result.match_score.text not in result.text
+    needs[2]['quote'] = 1
+    assert pack(kb, 'guitar', Scripted(needs)).match_score.text == '100%'
+    needs[0]['quote'] = needs[2]['quote'] = None
+    assert pack(kb, 'guitar', Scripted(needs)).match_score.text == '33%: missing guitar, amplifier'
+    assert pack(kb, 'guitar', Writer({})).match_score is None
+
+
+def test_nonempty_pack_requires_valid_needs(tmp_path, fake):
+    import pytest
+    from memoryforall.pack import WritingModelError
+    kb = make(tmp_path, fake, [conv('a', 'I chose the blue guitar for recording')])
+    class Scripted:
+        def __init__(self, response): self.response, self.calls = response, 0
+        def ask(self, prompt):
+            self.calls += 1
+            return {'subjects': [{'quotes': ['I chose the blue guitar for recording']}]} if self.calls == 1 else self.response
+    for response in ({}, {'needs': []}, {'needs': [{'need': '   ', 'quote': 1}]}, {'needs': 'invalid'}):
+        with pytest.raises(WritingModelError, match='needs'):
+            pack(kb, 'guitar', Scripted(response))
+
+
+def test_cli_prints_match_score_after_needs(tmp_path, fake, capsys, monkeypatch):
+    from memoryforall.cli import main
+    monkeypatch.setenv('MEMORYFORALL_CONFIG_DIR', str(tmp_path / 'config'))
+    kb = make(tmp_path / 'kb', fake, [conv('a', 'I chose the blue guitar for recording')])
+    class Scripted:
+        def __init__(self): self.calls = 0
+        def ask(self, prompt):
+            self.calls += 1
+            return ({'subjects': [{'quotes': ['I chose the blue guitar for recording']}]} if self.calls == 1
+                    else {'needs': [{'need': 'guitar', 'quote': 1}, {'need': 'price', 'quote': None}]})
+    assert main(['pack', 'guitar', '--kb', str(kb.folder)], embedder=fake, writer=Scripted()) == 0
+    output = capsys.readouterr()
+    assert 'Match Score: 50%: missing price' in output.err
+    assert output.err.index('price: missing') < output.err.index('Match Score:')
+    assert 'Match Score' not in output.out

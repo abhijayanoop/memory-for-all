@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (Match Score on the pack result), 03 (Quality run end to end)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Review file shows Match Score and needs per pack, and the hand-mark lines in the fixed form; unanswerable sections have none
 - [ ] Hallucination: sum of marks; pass only when every question is 0; failing questions named

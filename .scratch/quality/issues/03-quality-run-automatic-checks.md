@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 (Test Set and `quality add`), spec 3 ticket 01 (`.scratch/context-pack/issues/01-pack-end-to-end-with-local-writer.md`)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] `run(kb, test_set, writer) -> Report` calls `search(question, k=8)` (raw, before the floor) and `pack` per question
 - [ ] Finding: a hit is right when it comes from the marked Conversation and its normalised text contains the normalised phrase; answerable + partly questions with a right hit in the top 8 ÷ those questions; pass ≥ 90%
