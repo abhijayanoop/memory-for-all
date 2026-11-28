@@ -130,7 +130,12 @@ def run(kb, test_set, writer):
         try:
             result = pack(kb, q['question'], writer)
             rows.append({'question': q, 'finding': finding, 'nothing_found': result.nothing_found,
-                         'pack': result.text, 'error': None})
+                         'pack': result.text, 'error': None,
+                         'needs': [n.need for n in result.needs],
+                         'match_score': result.match_score.text if result.match_score else None,
+                         'current_decision': any(_normal(q['current']) in _normal(d.quote) and
+                             any(_normal(q['replaced']) in _normal(old.quote) for old in d.replaced)
+                             for d in result.decisions) if q['changed_mind'] else None})
         except WritingModelError as e:
             if index == 0:
                 raise
@@ -140,16 +145,41 @@ def run(kb, test_set, writer):
 
 
 def score(report):
+    for r in report.questions:
+        q = r['question']
+        if q['label'] == 'unanswerable' or r['error']:
+            continue
+        for field in ('hallucinations', 'wrong_missing'):
+            if type(r.get(field)) is not int or r[field] < 0:
+                raise ValueError(f"{q['question']}: invalid or blank {field}")
+        if r['nothing_found'] and (type(r.get('expected')) is not int or r['expected'] < 1):
+            raise ValueError(f"{q['question']}: invalid or blank needs you expected")
+        if q['label'] == 'partly' and r.get('missing_exact') not in ('yes', 'no'):
+            raise ValueError(f"{q['question']}: invalid or blank missing needs named exactly")
     checks = []
     for name, selected, threshold in (
         ('Finding', [r for r in report.questions if r['question']['label'] != 'unanswerable'], 0.9),
-        ('Correct Abstention', [r for r in report.questions if r['question']['label'] == 'unanswerable'], 1.0),
+        ('Correct Abstention', [r for r in report.questions if r['question']['label'] in ('unanswerable', 'partly')], 1.0),
     ):
         failures = [r['question']['question'] for r in selected if r['error'] or not (
-            r['finding'] if name == 'Finding' else r['nothing_found'])]
+            r['finding'] if name == 'Finding' else (r['nothing_found'] if r['question']['label'] == 'unanswerable' else r['missing_exact'] == 'yes'))]
         passed = len(selected) - len(failures)
         checks.append(Check(name, not selected or passed / len(selected) >= threshold,
                             f'{passed}/{len(selected)} (pass >= {threshold:.0%})', failures))
+    rows = [r for r in report.questions if r['question']['label'] != 'unanswerable']
+    names = lambda rs: [r['question']['question'] for r in rs]
+    failed = [r for r in rows if r['error'] or r['hallucinations']]
+    checks.insert(1, Check('Hallucination', not failed, f"{sum(r.get('hallucinations', 0) for r in rows)} (pass = 0)", names(failed)))
+    numerator = sum(r.get('wrong_missing', 0) + (r.get('expected', 0) if r['nothing_found'] else 0) for r in rows)
+    denominator = sum(len(r.get('needs', [])) + (r.get('expected', 0) if r['nothing_found'] else 0) for r in rows)
+    failed = [r for r in rows if r['error'] or r.get('wrong_missing', 0) or (r['nothing_found'] and r.get('expected', 0))]
+    checks.append(Check('Wrong Abstention', not any(r['error'] for r in rows) and (not denominator or numerator / denominator <= .1), f'{numerator}/{denominator} (pass <= 10%)', names(failed)))
+    selected = [r for r in report.questions if r['question']['changed_mind']]
+    failed = [r for r in selected if r['error'] or not r.get('current_decision')]
+    checks.append(Check('Current Decision', not failed, f'{len(selected)-len(failed)}/{len(selected)} (pass = 100%)', names(failed)))
+    shortfalls = TestSet([r['question'] for r in report.questions], 1).shortfalls
+    checks.append(Check('Overall', all(c.passed for c in checks) and not shortfalls,
+                        'Test Set shortfall: ' + ', '.join(shortfalls) if shortfalls else 'all five checks', []))
     return checks
 
 
@@ -163,8 +193,16 @@ def write_review(report, folder):
         q = row['question']
         lines.extend(['', f"## Q{q['id']}: {q['question']} ({q['label']})", '',
                       row['error'] or row['pack'] or 'Nothing found in your chats for this',
+                      f"Match Score: {row.get('match_score') or 'none'}",
+                      'Needs: ' + (', '.join(row.get('needs', [])) or 'none'),
                       '', f"Automatic: Finding {'pass' if row['finding'] else 'fail'}" if q['label'] != 'unanswerable'
                       else f"Automatic: Correct Abstention {'pass' if row['nothing_found'] and not row['error'] else 'fail'}"])
+        if q['label'] != 'unanswerable' and not row['error']:
+            lines.extend(['Hallucinations: ____', 'Needs wrongly missing: ____'])
+            if q['label'] == 'partly':
+                lines.append('Missing needs named exactly (yes/no): ____')
+            if row['nothing_found']:
+                lines.append('Needs you expected: ____')
     path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
     return path
 
@@ -173,6 +211,20 @@ def read_review(path):
     text = Path(path).read_text(encoding='utf-8')
     try:
         data = json.loads(text.split('<!-- quality-data ', 1)[1].split(' -->', 1)[0])
+        sections = text.split('\n## Q')[1:]
+        if len(sections) != len(data['questions']):
+            raise ValueError('question sections do not match')
+        for row, section in zip(data['questions'], sections):
+            q = row['question']
+            if not section.startswith(f"{q['id']}: {q['question']} ("):
+                raise ValueError(f"{q['question']}: question section does not match")
+            if q['label'] == 'unanswerable' or row['error']:
+                continue
+            for label, field in (('Hallucinations', 'hallucinations'), ('Needs wrongly missing', 'wrong_missing'),
+                                 ('Missing needs named exactly (yes/no)', 'missing_exact'), ('Needs you expected', 'expected')):
+                values = [line[len(label)+2:].strip() for line in section.splitlines() if line.startswith(label + ': ')]
+                value = values[0] if len(values) == 1 else ''
+                row[field] = value if field == 'missing_exact' else int(value) if value.isdigit() else None
         return Report(data['questions'], data['settings'])
     except (IndexError, KeyError, ValueError, TypeError) as e:
         raise ValueError(f'Invalid review file: {path}') from e

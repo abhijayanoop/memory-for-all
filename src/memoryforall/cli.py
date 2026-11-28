@@ -150,6 +150,11 @@ def main(argv=None, embedder=None, embedders=EMBEDDERS, writer=None) -> int:
                 print(f"Review: {path}")
                 if test_set.shortfalls:
                     print("Test Set shortfall: " + ", ".join(test_set.shortfalls))
+                for row in report.questions:
+                    q = row['question']
+                    result = row['finding'] if q['label'] != 'unanswerable' else row['nothing_found']
+                    print(f"{q['question']}: {'PASS' if result and not row['error'] else 'FAIL'}")
+                return 0
             else:
                 paths = sorted((kb.folder / "quality" / "runs").glob("*.md"))
                 if not a.review and not paths:
