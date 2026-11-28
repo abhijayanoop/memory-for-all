@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Test Set file shape as in the spec (`id`, `question`, `label`, `changed_mind`, `right` as Conversation + phrase, `current`, `replaced`); ids assigned by `quality add`, never reused
 - [ ] `load_test_set` validates: `right` required unless unanswerable, `current`/`replaced` required when changed-mind, known labels only; errors name the question and field

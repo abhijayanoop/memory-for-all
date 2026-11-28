@@ -4,7 +4,7 @@
 
 **Blocked by:** spec 3 ticket 05 (`.scratch/context-pack/issues/05-needs-coverage.md`)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] `PackResult` carries a Match Score: percentage (rounded to the nearest whole number) and the list of missing needs, plus its short text form (`"60%: missing X"`, `"100%"`, several missing needs joined with commas)
 - [ ] Only program-verified coverage counts (spec 3's rule); a need the writer claims covered with an unverified quote is missing

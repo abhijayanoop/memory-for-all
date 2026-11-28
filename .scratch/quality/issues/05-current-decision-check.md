@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 (Quality run end to end), spec 3 ticket 03 (`.scratch/context-pack/issues/03-current-decision-and-suggestions.md`)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] A changed-mind question passes when some subject in `PackResult.decisions` has a leading quote containing the `current` phrase and a replaced quote containing the `replaced` phrase (normalised containment); pass = 100%
 - [ ] The result shows in the review file's automatic line, in `quality run`'s printout and in `quality score`

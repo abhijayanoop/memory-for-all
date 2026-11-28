@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 (Quality run end to end)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Per answerable/partly question: best re-ranker score among its right hits in the raw top 8 (none if no right hit); per unanswerable question: the top hit's score
 - [ ] Suggested floor = the value that misclassifies the fewest questions (unanswerable at or above it, answerable/partly with best right hit below it or none); ties take the lower value
