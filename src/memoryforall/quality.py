@@ -165,7 +165,11 @@ def run(kb, test_set, writer):
         try:
             result = pack(kb, q['question'], writer)
             rows.append({'question': q, 'finding': finding, 'nothing_found': result.nothing_found,
-                         'pack': result.text, 'error': None, 'floor_score': floor_score})
+                         'pack': result.text, 'error': None, 'floor_score': floor_score,
+                         'current_decision': q['changed_mind'] and not result.nothing_found and any(
+                             _normal(q['current']) in _normal(d.quote) and any(
+                                 _normal(q['replaced']) in _normal(old.quote) for old in d.replaced)
+                             for d in result.decisions)})
         except WritingModelError as e:
             if index == 0:
                 raise
@@ -179,9 +183,11 @@ def score(report):
     for name, selected, threshold in (
         ('Finding', [r for r in report.questions if r['question']['label'] != 'unanswerable'], 0.9),
         ('Correct Abstention', [r for r in report.questions if r['question']['label'] == 'unanswerable'], 1.0),
+        ('Current Decision', [r for r in report.questions if r['question']['changed_mind']], 1.0),
     ):
         failures = [r['question']['question'] for r in selected if r['error'] or not (
-            r['finding'] if name == 'Finding' else r['nothing_found'])]
+            r['finding'] if name == 'Finding' else r['nothing_found'] if name == 'Correct Abstention'
+            else r.get('current_decision', False))]
         passed = len(selected) - len(failures)
         checks.append(Check(name, not selected or passed / len(selected) >= threshold,
                             f'{passed}/{len(selected)} (pass >= {threshold:.0%})', failures))
@@ -200,6 +206,8 @@ def write_review(report, folder):
                       row['error'] or row['pack'] or 'Nothing found in your chats for this',
                       '', f"Automatic: Finding {'pass' if row['finding'] else 'fail'}" if q['label'] != 'unanswerable'
                       else f"Automatic: Correct Abstention {'pass' if row['nothing_found'] and not row['error'] else 'fail'}"])
+        if q['changed_mind']:
+            lines[-1] += f" ? Current Decision {'pass' if row.get('current_decision') and not row['error'] else 'fail'}"
     path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
     return path
 
